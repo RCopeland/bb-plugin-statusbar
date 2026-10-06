@@ -141,10 +141,19 @@ export default async function plugin(bb: BbPluginApi) {
     if (discovered !== null) {
       try {
         const response = await registry.resolve(discovered).snapshot();
-        return {
-          payload: response.section,
-          source: { topic, kind: "provider", pluginId: discovered.pluginId },
-        };
+        // A provider that answers with a different topic than the one it was
+        // discovered under would render its data into the wrong slot. Refuse it
+        // rather than trusting the payload.
+        if (response.section.topic !== topic) {
+          bb.log.warn(
+            `provider ${discovered.pluginId} was discovered for "${topic}" but returned "${response.section.topic}"; ignoring it`,
+          );
+        } else {
+          return {
+            payload: response.section,
+            source: { topic, kind: "provider", pluginId: discovered.pluginId },
+          };
+        }
       } catch (error) {
         bb.log.warn(
           `provider ${discovered.pluginId} failed the "${topic}" section, falling back to the built-in: ${
@@ -203,9 +212,11 @@ export default async function plugin(bb: BbPluginApi) {
     rpcContract,
     {
       snapshot: async (): Promise<Snapshot> => {
-        // Refresh the provider list at most every DISCOVERY_INTERVAL_MS; this
-        // is a no-op on most calls.
-        await registry.refresh();
+        // Kick off a background re-scan at most every DISCOVERY_INTERVAL_MS.
+        // Deliberately NOT awaited: a slow or hanging provider must not delay
+        // the whole bar. A newly discovered provider is picked up on the next
+        // read instead.
+        registry.refresh();
 
         // Every topic settles independently, and each one may come from a
         // different plugin. One failing source must never blank the bar.
@@ -223,6 +234,11 @@ export default async function plugin(bb: BbPluginApi) {
       section_action: async ({ topic, actionId }) => {
         const discovered = registry.get(topic);
         if (discovered !== null) {
+          // Unlike a read, an action is not silently rerouted to the built-in on
+          // failure: the user pressed a button that the provider advertised, so
+          // the provider's own error is the honest answer. Rerouting a Spotify
+          // click to a different plugin's control path would be worse than
+          // reporting the failure.
           return registry.resolve(discovered).action(actionId);
         }
         return runBuiltinAction(topic, actionId);

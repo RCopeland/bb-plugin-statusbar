@@ -125,11 +125,29 @@ export const sectionMetricSchema = z
     label: z.string(),
     value: z.string(),
     tone: sectionToneSchema.default("neutral"),
-    /** Extra context on hover; never rendered inline. */
+    /**
+     * Extra context. Rendered inline when the section is not compact, and as a
+     * hover title always — the old per-section components showed their detail
+     * inline, so this must stay visible rather than living in a tooltip alone.
+     */
     detail: z.string().nullable().default(null),
+    /**
+     * Drop this metric first on a narrow window.
+     *
+     * `primary` metrics always render; `secondary` ones are dropped in compact
+     * mode. The bar owns the decision but the provider knows which of its
+     * numbers are load-bearing: DISK and load matter less than CPU and memory.
+     */
+    importance: z.enum(["primary", "secondary"]).default("primary"),
   })
   .strict();
 export type SectionMetric = z.infer<typeof sectionMetricSchema>;
+
+/**
+ * A metric as a provider writes it: the schema's `.default()` fields are
+ * optional on input and filled in when the payload is parsed.
+ */
+export type SectionMetricInput = z.input<typeof sectionMetricSchema>;
 
 /** Transport controls a provider may ask the bar to render. */
 export const sectionActionSchema = z
@@ -144,6 +162,8 @@ export const sectionActionSchema = z
   })
   .strict();
 export type SectionAction = z.infer<typeof sectionActionSchema>;
+/** An action as a provider writes it; `enabled` defaults to true. */
+export type SectionActionInput = z.input<typeof sectionActionSchema>;
 
 /**
  * A section reading.
@@ -165,10 +185,21 @@ export const sectionPayloadSchema = z
     text: z.string().nullable().default(null),
     /** Rendered as transport buttons next to the section. */
     actions: z.array(sectionActionSchema).default([]),
-    /** Muted explanation shown when `status` is not `ok`. */
+    /** Muted explanation shown when `status` is not `ok`, and inline context otherwise. */
     detail: z.string().nullable().default(null),
   })
-  .strict();
+  .strict()
+  .refine(
+    // An `ok` section with nothing visible in it would render as an empty gap:
+    // the bar would look broken rather than degraded. Refusing it at the schema
+    // means the bar falls back to its built-in instead of blanking the topic.
+    (section) =>
+      section.status !== "ok" ||
+      section.metrics.length > 0 ||
+      section.headline !== null ||
+      section.text !== null,
+    { message: "an `ok` section must carry at least one metric, headline, or text" },
+  );
 export type SectionPayload = z.infer<typeof sectionPayloadSchema>;
 
 /** What `section.v1.snapshot` returns. */
@@ -229,23 +260,27 @@ export const sectionActionResponseSchema = z
   .strict();
 export type SectionActionResponse = z.infer<typeof sectionActionResponseSchema>;
 
-/** Build an `ok` metrics section. Keeps provider code to one call. */
+/**
+ * Build an `ok` metrics section. Keeps provider code to one call.
+ *
+ * Parsed through the schema so the `.default()` fields (`tone`, `detail`,
+ * `importance`, `enabled`) are actually filled in, rather than the caller
+ * having to repeat them at every call site.
+ */
 export function metricsSection(args: {
   topic: SectionTopic;
-  metrics: SectionMetric[];
-  actions?: SectionAction[];
+  metrics: SectionMetricInput[];
+  actions?: SectionActionInput[];
   detail?: string | null;
 }): SectionPayload {
-  return {
+  return sectionPayloadSchema.parse({
     topic: args.topic,
     status: "ok",
     presentation: "metrics",
     metrics: args.metrics,
-    headline: null,
-    text: null,
     actions: args.actions ?? [],
     detail: args.detail ?? null,
-  };
+  });
 }
 
 /** Build a degraded section: a short muted label, never a blank bar. */
@@ -255,14 +290,10 @@ export function unavailableSection(args: {
   detail: string;
   presentation?: SectionPresentation;
 }): SectionPayload {
-  return {
+  return sectionPayloadSchema.parse({
     topic: args.topic,
     status: args.status ?? "unavailable",
     presentation: args.presentation ?? "text",
-    metrics: [],
-    headline: null,
-    text: null,
-    actions: [],
     detail: args.detail,
-  };
+  });
 }

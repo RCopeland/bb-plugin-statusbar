@@ -17,7 +17,12 @@ import { homedir, cpus, loadavg, totalmem, freemem, hostname } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { metricsSection, unavailableSection, type SectionPayload } from "bb-statusbar-section-protocol";
+import {
+  metricsSection,
+  sectionPayloadSchema,
+  unavailableSection,
+  type SectionPayload,
+} from "bb-statusbar-section-protocol";
 
 const USAGE_DB_PATH = join(homedir(), ".bb", "plugins", "usage", "data.db");
 const BB_DB_PATH = join(homedir(), ".bb", "bb.db");
@@ -30,7 +35,7 @@ const FETCH_TIMEOUT_MS = 20_000;
 // ---------------------------------------------------------------------------
 
 /** A cached async value with a fixed lifetime, plus explicit invalidation. */
-export function makeCache<T>(ttlMs: number, load: () => Promise<T>) {
+function makeCache<T>(ttlMs: number, load: () => Promise<T>) {
   let value: T | null = null;
   let expiresAt = 0;
   let inFlight: Promise<T> | null = null;
@@ -173,7 +178,7 @@ function createUsageReader() {
         .get(`${monthLabel}%`) as { cost: number | null } | undefined;
 
       const isToday = latestDay === localDay(new Date());
-      return {
+      return sectionPayloadSchema.parse({
         topic: "usage",
         status: "ok",
         presentation: "headline",
@@ -186,12 +191,10 @@ function createUsageReader() {
           },
         ],
         headline: money(Number(todayRow?.cost ?? 0)),
-        text: null,
-        actions: [],
         // The bar labels today's figure honestly when the newest data is older
         // than the current calendar day.
         detail: isToday ? null : `Latest data is ${latestDay}.`,
-      };
+      });
     } catch (error) {
       return unavailableSection({
         topic: "usage",
@@ -237,6 +240,18 @@ function laneMetric(name: string, usedPercent: number | null, resetLabel: string
     tone: toneForPercent(usedPercent),
     detail,
   };
+}
+
+/**
+ * A lane that could not be read.
+ *
+ * The `detail` is carried as the metric label rather than left to a tooltip:
+ * the pre-split bar rendered `Claude: provider reported "unconfigured"` as
+ * visible text, and a lane that silently shows `—` is worse than one that says
+ * why.
+ */
+function brokenLane(name: string, detail: string): LaneReading {
+  return { label: name, value: "—", tone: "critical", detail };
 }
 
 /** "↻4h" / "↻2d" / "↻12m" — when a refilling quota comes back. */
@@ -300,7 +315,7 @@ async function nativeLanes(bb: BbPluginApi): Promise<LaneReading[]> {
   }
 }
 
-async function openRouterLane(): Promise<LaneReading | null> {
+async function openRouterLane(): Promise<LaneReading> {
   const key = await readEnvKey("OPENROUTER_API_KEY");
   if (key === "") {
     return {
@@ -386,12 +401,21 @@ async function readHost(): Promise<SectionPayload> {
       metrics: [
         { label: "CPU", value: percent(cpuValue), tone: toneForPercent(cpuValue), detail: null },
         { label: "MEM", value: percent(memoryPercent), tone: toneForPercent(memoryPercent), detail: null },
-        { label: "DISK", value: percent(diskPercent), tone: toneForPercent(diskPercent), detail: null },
+        // DISK and load are the first to go on a narrow window, matching the
+        // pre-split bar's compact behavior.
+        {
+          label: "DISK",
+          value: percent(diskPercent),
+          tone: toneForPercent(diskPercent),
+          detail: null,
+          importance: "secondary" as const,
+        },
         {
           label: "load",
           value: load === null ? "—" : load.toFixed(2),
           tone: loadTone,
           detail: `${cores} logical core${cores === 1 ? "" : "s"}.`,
+          importance: "secondary" as const,
         },
       ],
       detail: null,
@@ -510,16 +534,12 @@ export function createSpotifyReader() {
       });
       // 204 = nothing playing on any device. Not an error.
       if (response.status === 204) {
-        return {
+        return sectionPayloadSchema.parse({
           topic: "spotify",
           status: "idle",
           presentation: "text",
-          metrics: [],
-          headline: null,
-          text: "nothing playing",
-          actions: [],
-          detail: null,
-        };
+          text: "♪ nothing playing",
+        });
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -533,34 +553,41 @@ export function createSpotifyReader() {
 
       const text =
         item?.name === undefined
-          ? "nothing playing"
-          : `${isPlaying ? "▶" : "❚❚"} ${artists.join(", ")} — ${String(item.name)}`;
+          ? "♪ nothing playing"
+          : `${isPlaying ? "♪" : "♪ ❚❚"} ${artists.join(", ")} — ${String(item.name)}`;
 
       const progressLabel =
         progressMs !== null && durationMs !== null && durationMs > 0
           ? `${Math.round((progressMs / durationMs) * 100)}%`
           : null;
 
-      return {
+      return sectionPayloadSchema.parse({
         topic: "spotify",
         status: hasTrack ? "ok" : "idle",
         presentation: "text",
         metrics:
           progressLabel === null
             ? []
-            : [{ label: "", value: progressLabel, tone: "neutral", detail: "Track progress." }],
-        headline: null,
+            : [
+                {
+                  label: "",
+                  value: progressLabel,
+                  tone: "neutral",
+                  detail: "Track progress.",
+                  importance: "secondary",
+                },
+              ],
         text,
         // Controls travel with the reading, so the bar renders them only when
         // the provider that owns them is the one answering.
         actions: [
-          { id: "previous", label: "Previous track", glyph: "⏮", enabled: true },
-          { id: isPlaying ? "pause" : "play", label: isPlaying ? "Pause" : "Play", glyph: isPlaying ? "❚❚" : "▶", enabled: true },
-          { id: "next", label: "Next track", glyph: "⏭", enabled: true },
+          { id: "previous", label: "Previous track", glyph: "⏮" },
+          { id: isPlaying ? "pause" : "play", label: isPlaying ? "Pause" : "Play", glyph: isPlaying ? "❚❚" : "▶" },
+          { id: "next", label: "Next track", glyph: "⏭" },
           { id: "like", label: "Save to Liked Songs", glyph: "♥", enabled: hasTrack },
         ],
         detail: playback?.device?.name ?? null,
-      };
+      });
     } catch (error) {
       return unavailable((error as Error).message, "error");
     }
@@ -603,7 +630,7 @@ export function createBuiltins(bb: BbPluginApi) {
 
   const lanesCache = makeCache(LANES_CACHE_MS, async (): Promise<SectionPayload> => {
     const [native, openrouter] = await Promise.all([nativeLanes(bb), openRouterLane()]);
-    const lanes = openrouter === null ? native : [...native, openrouter];
+    const lanes = [...native, openrouter];
     if (lanes.length === 0) {
       return unavailableSection({ topic: "lanes", status: "idle", detail: "no lanes" });
     }

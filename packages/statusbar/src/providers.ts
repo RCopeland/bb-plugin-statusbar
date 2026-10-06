@@ -28,14 +28,10 @@
 import { z } from "zod";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
-  BAR_METHOD_DESCRIBE,
   DISCOVERY_INTERVAL_MS,
   SECTION_METHOD_ACTION,
   SECTION_METHOD_SNAPSHOT,
-  barDescribeResponseSchema,
-  sectionActionRequestSchema,
   sectionActionResponseSchema,
-  sectionSnapshotInputSchema,
   sectionSnapshotResponseSchema,
   type SectionTopic,
 } from "bb-statusbar-section-protocol";
@@ -152,24 +148,30 @@ export function createProviderRegistry(bb: BbPluginApi) {
     /**
      * Refreshes the provider list if the discovery interval has lapsed.
      *
-     * Never throws: a scan failure keeps the previous list, so a transient
-     * discovery error does not strip a working provider out of the bar.
+     * Never throws, and NEVER blocks a read. The scan is kicked off in the
+     * background and its result is used from the next call onwards: awaiting it
+     * here would let one slow or hanging provider delay the entire bar, which
+     * is exactly the failure mode the built-in fallbacks exist to avoid.
      */
-    async refresh(now: number = Date.now()): Promise<void> {
+    refresh(now: number = Date.now()): void {
       if (scanning) return;
       if (now - lastScanAt < DISCOVERY_INTERVAL_MS) return;
       scanning = true;
-      try {
-        providers = await scan();
-        lastScanAt = now;
-      } catch (error) {
-        lastScanAt = now;
-        bb.log.warn(
-          `section discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      } finally {
-        scanning = false;
-      }
+      // Claim the window immediately so a slow scan is not restarted on every
+      // poll tick while it is still in flight.
+      lastScanAt = now;
+      void scan()
+        .then((next) => {
+          providers = next;
+        })
+        .catch((error: unknown) => {
+          bb.log.warn(
+            `section discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        })
+        .finally(() => {
+          scanning = false;
+        });
     },
 
     /** The provider for a topic, or null so the caller uses its built-in. */
@@ -199,25 +201,3 @@ export function createProviderRegistry(bb: BbPluginApi) {
     },
   };
 }
-
-/**
- * The response the bar itself publishes on `bar.v1.describe`.
- *
- * A provider can use this to confirm a bar is installed before doing work, and
- * to see which protocol versions it understands.
- */
-export function barDescribe(version: string) {
-  return barDescribeResponseSchema.parse({
-    version,
-    protocolVersions: ["v1"],
-    topics: ["usage", "lanes", "host", "spotify"],
-  });
-}
-
-export {
-  BAR_METHOD_DESCRIBE,
-  SECTION_METHOD_ACTION,
-  SECTION_METHOD_SNAPSHOT,
-  sectionActionRequestSchema,
-  sectionSnapshotInputSchema,
-};

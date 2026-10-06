@@ -28,8 +28,7 @@ import {
   sectionActionRequestSchema,
   sectionActionResponseSchema,
   sectionSnapshotResponseSchema,
-  unavailableSection,
-  type SectionMetric,
+  type SectionMetricInput,
 } from "bb-statusbar-section-protocol";
 
 const PROVIDER_VERSION = "0.1.0";
@@ -73,7 +72,7 @@ function resetLabel(resetsAt: string | null): string | null {
 }
 
 /** bb's own subscription windows: Claude Code and Codex. */
-async function nativeLanes(bb: BbPluginApi): Promise<SectionMetric[]> {
+async function nativeLanes(bb: BbPluginApi): Promise<SectionMetricInput[]> {
   const spec: Array<[string, string]> = [
     ["claudeCode", "Claude"],
     ["codex", "Codex"],
@@ -81,7 +80,7 @@ async function nativeLanes(bb: BbPluginApi): Promise<SectionMetric[]> {
 
   try {
     const usage = (await bb.sdk.system.usageLimits()) as Record<string, any>;
-    return spec.flatMap(([key, name]): SectionMetric[] => {
+    return spec.flatMap(([key, name]): SectionMetricInput[] => {
       const provider = usage?.[key];
       // Not installed is not a lane: omit rather than render an empty row.
       if (!provider || provider.status === "not_installed") return [];
@@ -118,7 +117,7 @@ async function nativeLanes(bb: BbPluginApi): Promise<SectionMetric[]> {
 }
 
 /** OpenRouter is metered: its balance does not refill on its own. */
-async function openRouterLane(): Promise<SectionMetric> {
+async function openRouterLane(): Promise<SectionMetricInput> {
   const key = await readEnvKey("OPENROUTER_API_KEY");
   if (key === "") {
     return { label: "OpenRouter", value: "not configured", tone: "neutral", detail: "no OPENROUTER_API_KEY in bb's env store" };
@@ -187,4 +186,3 @@ export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`ready (lanes provider ${PROVIDER_VERSION})`);
 }
 
-export { unavailableSection };

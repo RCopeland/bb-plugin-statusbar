@@ -69,15 +69,37 @@ function Fallback({ children }: { children: React.ReactNode }) {
  * A section that is not `ok` renders its `detail` as a short muted label
  * rather than disappearing: a section that has silently vanished reads as a
  * bug, while "usage: unavailable" reads as a fact about the world.
+ *
+ * `compact` drops `secondary` metrics and the inline detail text rather than
+ * dropping whole sections, so a narrow bar keeps every topic's headline number.
  */
 function SectionItem({ section, compact }: { section: SectionPayload; compact: boolean }) {
   if (section.status !== "ok" && section.status !== "idle") {
-    return <Fallback>{section.topic}: {section.detail ?? section.status}</Fallback>;
+    return (
+      <Fallback>
+        {section.topic}: {section.detail ?? section.status}
+      </Fallback>
+    );
   }
 
   if (section.status === "idle") {
     return <Fallback>{section.detail ?? section.text ?? section.topic}</Fallback>;
   }
+
+  // Providers mark the numbers that can be dropped first, so the bar does not
+  // have to hard-code which section loses what.
+  const metrics = compact
+    ? section.metrics.filter((metric) => metric.importance === "primary")
+    : section.metrics;
+
+  /** Inline context text. Visible, not tooltip-only: the pre-split components
+   *  showed things like "Latest data is 2026-10-05." as real text. */
+  const detail =
+    section.detail !== null && !compact ? (
+      <span className="truncate text-muted-foreground/60" title={section.detail}>
+        {section.detail}
+      </span>
+    ) : null;
 
   if (section.presentation === "headline") {
     return (
@@ -88,19 +110,20 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
       >
         <span className="shrink-0 font-medium tabular-nums text-foreground">
           {section.headline}
-          {/* A stale reading is labelled rather than passed off as current. */}
-          {section.detail !== null && !compact ? (
-            <span className="font-normal text-muted-foreground/60" title={section.detail}> </span>
-          ) : null}
         </span>
-        {section.metrics
+        {metrics
           .filter((metric) => metric.label !== "")
           .map((metric) => (
-            <span className="shrink-0 tabular-nums" key={metric.label} title={metric.detail ?? undefined}>
+            <span
+              className="shrink-0 tabular-nums"
+              key={metric.label}
+              title={metric.detail ?? undefined}
+            >
               <span className="text-muted-foreground/60">{metric.label}</span>{" "}
               <span className={TONE_CLASS[metric.tone]}>{metric.value}</span>
             </span>
           ))}
+        {detail}
       </span>
     );
   }
@@ -111,9 +134,23 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
         aria-label={section.topic}
         className="flex min-w-0 shrink-0 items-center gap-2"
         role="group"
-        title={section.detail ?? undefined}
       >
         <span className="truncate text-muted-foreground">{section.text}</span>
+        {/* A text section's own metrics (e.g. track progress) render only when
+            there is room, since the text is the load-bearing part. */}
+        {metrics
+          .filter((metric) => metric.label !== "")
+          .map((metric) => (
+            <span
+              className="shrink-0 tabular-nums"
+              key={metric.label}
+              title={metric.detail ?? undefined}
+            >
+              <span className="text-muted-foreground/60">{metric.label}</span>{" "}
+              <span className={TONE_CLASS[metric.tone]}>{metric.value}</span>
+            </span>
+          ))}
+        {detail}
       </span>
     );
   }
@@ -125,9 +162,9 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
       className="flex min-w-0 shrink-0 items-center gap-2"
       role="group"
     >
-      {section.metrics.map((metric) => (
+      {metrics.map((metric) => (
         <span
-          className="shrink-0 tabular-nums"
+          className="flex shrink-0 items-center gap-1 tabular-nums"
           key={`${metric.label}:${metric.value}`}
           title={metric.detail ?? undefined}
         >
@@ -135,8 +172,15 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
             <span className="text-muted-foreground/60">{metric.label}</span>
           )}{" "}
           <span className={TONE_CLASS[metric.tone]}>{metric.value}</span>
+          {/* A failing metric says why inline: `Claude —` alone reads as an
+              unexplained gap. Other details stay on hover to keep the row
+              short. */}
+          {metric.tone === "critical" && metric.detail !== null && !compact ? (
+            <span className="truncate text-muted-foreground/60">: {metric.detail}</span>
+          ) : null}
         </span>
       ))}
+      {detail}
     </span>
   );
 }
