@@ -628,17 +628,16 @@ const LANES_CACHE_MS = 60_000;
  * must not stop the host reading from rendering.
  */
 /**
- * The bar's built-in readers plus its Spotify control handles.
+ * The bar's built-in readers, plus its Spotify control handles.
  *
- * The index signature is what lets the bar look up an open topic and find
- * nothing, rather than the lookup being a type error.
+ * Readers live in their own map rather than as top-level members. Topics are
+ * open, so the bar looks a topic up as a plain string; keeping the lookup
+ * namespace separate from the control handles means no name collision can ever
+ * hand back something that is not a reader.
  */
-export interface Builtins extends Record<string, unknown> {
-  /** Topic readers, keyed by topic. */
-  usage: () => Promise<SectionPayload>;
-  lanes: () => Promise<SectionPayload>;
-  host: () => Promise<SectionPayload>;
-  spotify: () => Promise<SectionPayload>;
+export interface Builtins {
+  /** Built-in readers, keyed by topic. A provider-invented topic is absent. */
+  readers: Record<string, () => Promise<SectionPayload>>;
   /** Forces the next Spotify read to reload after a transport action. */
   invalidateSpotify: () => void;
   spotifyToken: () => Promise<string | null>;
@@ -670,10 +669,12 @@ export function createBuiltins(bb: BbPluginApi): Builtins {
    * rather than by topic.
    */
   return {
-    usage: usageCache,
-    lanes: lanesCache,
-    host: hostCache,
-    spotify: spotifyCache,
+    readers: {
+      usage: usageCache,
+      lanes: lanesCache,
+      host: hostCache,
+      spotify: spotifyCache,
+    },
     /** Exposed so transport controls can force a fresh reading after a click. */
     invalidateSpotify: () => spotifyCache.invalidate(),
     spotifyToken: spotify.token,

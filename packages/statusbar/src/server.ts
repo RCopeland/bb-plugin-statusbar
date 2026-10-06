@@ -174,7 +174,13 @@ export default async function plugin(bb: BbPluginApi) {
     }
 
     if (builtin === null) {
-      return { payload: null, source: { topic, kind: "provider", pluginId: null } };
+      // No built-in to fall back to. Report the provider that was present (and
+      // failed) rather than a bare null, so `snapshot` does not read as though
+      // no provider was ever found for this topic.
+      return {
+        payload: null,
+        source: { topic, kind: "provider", pluginId: discovered?.pluginId ?? null },
+      };
     }
     return {
       payload: await builtin(),
@@ -185,13 +191,12 @@ export default async function plugin(bb: BbPluginApi) {
   /**
    * The built-in reader for a topic, or null when the bar ships none.
    *
-   * Topics are open, so a topic a provider invented has no entry here — the
-   * index signature on `createBuiltins`' return type is what makes that a
-   * lookup rather than a type error.
+   * Topics are open, so a provider-invented topic legitimately finds nothing
+   * here. Readers are a separate map from the bar's other handles precisely so
+   * a name collision cannot hand back something that is not a reader.
    */
   function builtinReader(topic: SectionTopic): (() => Promise<SectionPayload>) | null {
-    const reader = builtins[topic];
-    return typeof reader === "function" ? (reader as () => Promise<SectionPayload>) : null;
+    return builtins.readers[topic] ?? null;
   }
 
   /**
