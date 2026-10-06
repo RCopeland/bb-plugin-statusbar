@@ -16,11 +16,18 @@ provider plugin or by a built-in fallback reader.
 packages/
   section-protocol/   the wire contract shared by the bar and its providers
   statusbar/          the bar: overlay, layout, registry, built-in fallbacks
-  section-lanes/      example provider: contributes the `lanes` section
+  section-clock/      example provider: contributes a `clock` topic
 ```
 
-Each package is a separately installable BB plugin (except
-`section-protocol`, which is a private workspace package compiled into both).
+`statusbar` and `section-clock` are separately installable BB plugins.
+`section-protocol` is a workspace package compiled into both; it is not a plugin
+and is not installed on its own.
+
+The clock example is deliberately trivial — it reads nothing but `new Date()` —
+so that what remains is purely the shape of a contribution, with no data source
+to explain. It also claims a topic the bar has never heard of, which is the
+point: **topics are open**, so adding a section does not require a change to the
+bar.
 
 ## Why sections are separate plugins
 
@@ -43,6 +50,8 @@ statusbar, and it does not try to. Contribution is pull-based:
    the plugins that publish `section.v1.snapshot`.
 2. It asks each candidate for a reading to learn which topic it supplies.
 3. Per topic, a discovered provider **wins over the built-in**.
+4. Topics the bar ships no reader for are rendered anyway, ordered after the
+   built-in ones.
 
 Consequences, all of them intentional:
 
@@ -54,13 +63,15 @@ Consequences, all of them intentional:
   provider crash.
 - Two plugins claiming one topic is logged, and one wins. The bar never fails
   because of a collision.
+- A topic the bar has no built-in reader for simply appears when a provider for
+  it is loaded, and disappears when that provider goes away.
 
 `bb plugin rpc call statusbar snapshot` reports `sources`, so you can always tell
 where a reading came from:
 
 ```json
 "usage":   { "kind": "builtin",  "pluginId": null },
-"lanes":   { "kind": "provider", "pluginId": "statusbar-section-lanes" }
+"clock":   { "kind": "provider", "pluginId": "statusbar-section-clock" }
 ```
 
 ## Writing a provider
@@ -102,6 +113,13 @@ export default async function plugin(bb: BbPluginApi) {
 }
 ```
 
+To claim a topic the bar does not ship, just name it: `topic` accepts any
+lowercase name (letters, digits, dashes). `section-clock` contributes `clock`.
+Claiming a built-in topic instead (`usage`, `lanes`, `host`, `spotify`) replaces
+that section rather than adding one.
+
+Renderer helpers: `metricsSection`, `textSection`, and `unavailableSection`.
+
 Rules worth knowing:
 
 - **Return data, not UI.** A provider picks one of three presentations
@@ -113,7 +131,9 @@ Rules worth knowing:
 - **Mark what can be dropped.** `importance: "secondary"` tells the bar which
   numbers to shed on a narrow window. Leave it off and the metric is treated as
   `primary`. Marking *everything* secondary is safe: the bar keeps them all
-  rather than rendering a blank section.
+  rather than rendering a blank section. A section can also mark *itself*
+  `importance: "secondary"`, which makes it the first to lose its whole slot —
+  that is how the clock and Spotify sections yield to cost and headroom.
 - **Degrade locally.** A section carries its own `status`; return
   `unavailableSection({...})` rather than throwing when your source is down. An
   `ok` section with no visible metric, headline, or text is rejected and the bar
@@ -238,7 +258,7 @@ bb plugin rpc call statusbar snapshot --json
 bb plugin rpc call statusbar providers --json   # which providers are discovered
 ```
 
-Same flow in `packages/section-lanes` for the provider.
+Same flow in `packages/section-clock` for the provider.
 
 ## Known limitations
 

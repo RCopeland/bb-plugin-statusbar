@@ -542,6 +542,9 @@ export function createSpotifyReader() {
           status: "idle",
           presentation: "text",
           text: "♪ nothing playing",
+          // The longest and least load-bearing section: first to go when the
+          // window is narrow.
+          importance: "secondary",
         });
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -568,6 +571,7 @@ export function createSpotifyReader() {
         topic: "spotify",
         status: hasTrack ? "ok" : "idle",
         presentation: "text",
+        importance: "secondary",
         metrics:
           progressLabel === null
             ? []
@@ -623,7 +627,24 @@ const LANES_CACHE_MS = 60_000;
  * Each is independently cached and independently failing: a broken usage store
  * must not stop the host reading from rendering.
  */
-export function createBuiltins(bb: BbPluginApi) {
+/**
+ * The bar's built-in readers plus its Spotify control handles.
+ *
+ * The index signature is what lets the bar look up an open topic and find
+ * nothing, rather than the lookup being a type error.
+ */
+export interface Builtins extends Record<string, unknown> {
+  /** Topic readers, keyed by topic. */
+  usage: () => Promise<SectionPayload>;
+  lanes: () => Promise<SectionPayload>;
+  host: () => Promise<SectionPayload>;
+  spotify: () => Promise<SectionPayload>;
+  /** Forces the next Spotify read to reload after a transport action. */
+  invalidateSpotify: () => void;
+  spotifyToken: () => Promise<string | null>;
+}
+
+export function createBuiltins(bb: BbPluginApi): Builtins {
   const readUsage = createUsageReader();
   const spotify = createSpotifyReader();
 
@@ -640,6 +661,14 @@ export function createBuiltins(bb: BbPluginApi) {
     return metricsSection({ topic: "lanes", metrics: lanes });
   });
 
+  /**
+   * Built-in readers, keyed by topic.
+   *
+   * The index signature is deliberate: topics are open, so the bar looks up a
+   * provider-invented topic here and legitimately finds nothing. It also keeps
+   * this object free of the non-reader members below, which are reached by name
+   * rather than by topic.
+   */
   return {
     usage: usageCache,
     lanes: lanesCache,

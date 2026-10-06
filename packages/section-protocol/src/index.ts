@@ -67,24 +67,74 @@ export const DISCOVERY_INTERVAL_MS = 10_000;
  *
  * This is the *identity* of a section, not a display name: the bar renders at
  * most one provider per topic, and a provider for topic `lanes` replaces the
- * bar's built-in lanes reading. Ordering in the bar is owned by the bar, not
- * by providers, so a provider cannot push itself to the front.
+ * bar's built-in lanes reading.
+ *
+ * Topics are OPEN, not a closed set. A plugin may contribute a topic the bar
+ * has never heard of (see the in-repo `section-clock` example), which is what
+ * makes "sections are separate plugins" mean something: adding a section does
+ * not require a change to the bar. The four topics below are the ones the bar
+ * ships built-in readers for; they are constants rather than an enum so a
+ * provider can name its own.
+ *
+ * Ordering is still owned by the bar, so a provider cannot push itself to the
+ * front of the row.
  */
-export const sectionTopicSchema = z.enum(["usage", "lanes", "host", "spotify"]);
+export const sectionTopicSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  // Lowercase, digits, and dashes: kept to a shape that is safe as a DOM
+  // attribute value and stable in logs. No dots, since the RPC layer already
+  // uses dotted method names and mixing the two is confusing.
+  .regex(/^[a-z0-9-]+$/, "a topic must be lowercase letters, digits, or dashes");
 export type SectionTopic = z.infer<typeof sectionTopicSchema>;
+
+/** Topics the bar ships a built-in reader for. */
+export const BUILTIN_TOPICS = ["usage", "lanes", "host", "spotify"] as const;
+export type BuiltinTopic = (typeof BUILTIN_TOPICS)[number];
+
+function isBuiltinTopic(topic: string): topic is BuiltinTopic {
+  return (BUILTIN_TOPICS as readonly string[]).includes(topic);
+}
 
 /**
  * The order topics appear in the bar, left to right.
  *
- * Providers cannot influence this. It lives here rather than inside the bar's
- * server so a provider author can read the intended layout from the contract.
+ * A PREFERENCE, not an exhaustive list: the topics here render first, in this
+ * order, and any topic a provider invents renders after them — see
+ * `orderTopics`. Providers cannot influence this, which is why it lives in the
+ * contract rather than in the bar: a provider author can read the intended
+ * layout without guessing.
  */
-export const SECTION_TOPIC_ORDER: readonly SectionTopic[] = [
+export const SECTION_TOPIC_ORDER: readonly BuiltinTopic[] = [
   "usage",
   "lanes",
   "host",
   "spotify",
 ];
+
+/**
+ * Sorts topics for display: known topics in their declared order, then unknown
+ * ones alphabetically.
+ *
+ * Unknown topics go last because the leftmost slots are the most load-bearing
+ * (cost, headroom). A provider that invented a topic has not earned the left
+ * edge, and making the position deterministic means the bar does not reshuffle
+ * as plugins are installed in a different order.
+ */
+export function orderTopics(topics: readonly string[]): string[] {
+  return [...topics].sort((left, right) => {
+    const leftKnown = isBuiltinTopic(left);
+    const rightKnown = isBuiltinTopic(right);
+    if (leftKnown && rightKnown) {
+      return SECTION_TOPIC_ORDER.indexOf(left) - SECTION_TOPIC_ORDER.indexOf(right);
+    }
+    if (leftKnown) return -1;
+    if (rightKnown) return 1;
+    return left.localeCompare(right);
+  });
+}
 
 /**
  * How a section wants to be rendered.
@@ -186,6 +236,15 @@ export const sectionPayloadSchema = z
     /** Rendered as transport buttons next to the section. */
     actions: z.array(sectionActionSchema).default([]),
     /**
+     * Whether this whole section can be dropped on a narrow window.
+     *
+     * `primary` sections always render; `secondary` ones go first when width is
+     * tight. Set by the section's provider, because the provider knows whether
+     * its numbers matter more than another section's — the bar cannot know
+     * that for a topic it has never heard of.
+     */
+    importance: z.enum(["primary", "secondary"]).default("primary"),
+    /**
      * Muted explanation rendered inline when the bar is not compact.
      *
      * Used both when `status` is not `ok` (why the section is degraded) and as
@@ -283,6 +342,7 @@ export function metricsSection(args: {
   metrics: SectionMetricInput[];
   actions?: SectionActionInput[];
   detail?: string | null;
+  importance?: "primary" | "secondary";
 }): SectionPayload {
   return sectionPayloadSchema.parse({
     topic: args.topic,
@@ -291,6 +351,28 @@ export function metricsSection(args: {
     metrics: args.metrics,
     actions: args.actions ?? [],
     detail: args.detail ?? null,
+    importance: args.importance ?? "primary",
+  });
+}
+
+/** Build an `ok` text section, e.g. a clock or a now-playing line. */
+export function textSection(args: {
+  topic: SectionTopic;
+  text: string;
+  metrics?: SectionMetricInput[];
+  actions?: SectionActionInput[];
+  detail?: string | null;
+  importance?: "primary" | "secondary";
+}): SectionPayload {
+  return sectionPayloadSchema.parse({
+    topic: args.topic,
+    status: "ok",
+    presentation: "text",
+    text: args.text,
+    metrics: args.metrics ?? [],
+    actions: args.actions ?? [],
+    detail: args.detail ?? null,
+    importance: args.importance ?? "primary",
   });
 }
 

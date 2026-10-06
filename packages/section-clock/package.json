@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-statusbar-section-lanes",
+  "name": "bb-plugin-statusbar-section-clock",
   "version": "0.1.0",
   "type": "module",
   "engines": {
@@ -7,8 +7,8 @@
     "bbPluginSdk": ">=0.5.29"
   },
   "bb": {
-    "name": "Statusbar — Lanes",
-    "description": "Contributes model lane headroom to the Statusbar plugin as a section.",
+    "name": "Statusbar — Clock",
+    "description": "Example Sectionbar provider: adds the current time and date as a section.",
     "branding": {
       "icon": "Gauge"
     },

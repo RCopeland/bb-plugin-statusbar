@@ -313,11 +313,13 @@ function StatusBar() {
     );
   }
 
-  // The longest, least load-bearing section is the first to go when width is
-  // tight. Everything else stays: a bar that drops the cost figure to keep the
-  // track name would be optimizing for the wrong thing.
+  // The least load-bearing sections are the first to go when width is tight.
+  // A section says so itself (`importance`), rather than the bar keeping a
+  // hardcoded list of which topics are expendable — otherwise every new topic
+  // a provider invents would need a change here, which is exactly what open
+  // topics are meant to avoid.
   const visible = compact
-    ? snapshot.sections.filter((section) => section.topic !== "spotify")
+    ? snapshot.sections.filter((section) => section.importance !== "secondary")
     : snapshot.sections;
 
   return (

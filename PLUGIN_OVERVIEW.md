@@ -38,11 +38,16 @@ There is no manifest dependency and no install order. The bar works with nothing
 else installed, and a provider that is missing, disabled, or crashing just means
 the built-in answers instead — the section never goes blank.
 
+**Topics are open.** A provider may contribute a topic the bar has never heard
+of (the clock example does exactly this), so adding a section never requires a
+change to the bar. Built-in topics render first, in a fixed order; contributed
+topics render after them.
+
 `bb plugin rpc call statusbar snapshot` reports where each section came from, so
 this is never guesswork:
 
 ```json
-"lanes": { "kind": "provider", "pluginId": "statusbar-section-lanes" }
+"clock": { "kind": "provider", "pluginId": "statusbar-section-clock" }
 ```
 
 The protocol lives in `packages/section-protocol`, shared by the bar and every
@@ -55,7 +60,9 @@ written. That means the plugin that already owns a piece of data can publish it,
 instead of the bar carrying a copy that goes stale.
 
 - `statusbar` — the bar, its registry, and the built-in fallbacks.
-- `section-lanes` — example provider, publishing lane headroom.
+- `section-clock` — example provider, adding a clock. It reads nothing but the
+  system time on purpose: with no data source to explain, what remains is purely
+  the shape of a contribution.
 - `section-protocol` — the shared contract (not installed on its own).
 
 The built-in usage and lanes readers are still copies of the logic in the Usage

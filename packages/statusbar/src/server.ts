@@ -39,6 +39,8 @@ import {
   SECTION_METHOD_ACTION,
   SECTION_METHOD_SNAPSHOT,
   SECTION_TOPIC_ORDER,
+  orderTopics,
+  sectionTopicSchema,
   barDescribeResponseSchema,
   sectionActionRequestSchema,
   sectionActionResponseSchema,
@@ -49,6 +51,7 @@ import {
   type SectionTopic,
 } from "bb-statusbar-section-protocol";
 import { createBuiltins, spotifyDefaultDeviceId, spotifyDisruptiveActionsAllowed } from "./builtins.js";
+import type { BuiltinTopic } from "bb-statusbar-section-protocol";
 import { createProviderRegistry } from "./providers.js";
 import { controlSpotify, likeSpotifyTrack } from "./spotify-controls.js";
 
@@ -77,7 +80,7 @@ const snapshotSchema = z
     sources: z.array(
       z
         .object({
-          topic: z.enum(["usage", "lanes", "host", "spotify"]),
+          topic: sectionTopicSchema,
           kind: z.enum(["provider", "builtin"]),
           /** Provider plugin id, when `kind` is "provider". */
           pluginId: z.string().nullable(),
@@ -133,11 +136,18 @@ export default async function plugin(bb: BbPluginApi) {
    * A provider that fails is not retried on this call: the built-in answers
    * instead and the failure is logged. That keeps a broken provider from
    * blanking a section it never previously supplied.
+   *
+   * A topic with no built-in reader (one a provider invented) has nothing to
+   * fall back to, so a failing provider there produces no section at all
+   * rather than an error placeholder: the bar simply loses a section nobody
+   * promised it would have.
    */
   async function readTopic(
     topic: SectionTopic,
   ): Promise<{ payload: SectionPayload | null; source: SectionSource }> {
     const discovered = registry.get(topic);
+    const builtin = builtinReader(topic);
+
     if (discovered !== null) {
       try {
         const response = await registry.resolve(discovered).snapshot();
@@ -156,16 +166,32 @@ export default async function plugin(bb: BbPluginApi) {
         }
       } catch (error) {
         bb.log.warn(
-          `provider ${discovered.pluginId} failed the "${topic}" section, falling back to the built-in: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `provider ${discovered.pluginId} failed the "${topic}" section${
+            builtin === null ? "" : ", falling back to the built-in"
+          }: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
+
+    if (builtin === null) {
+      return { payload: null, source: { topic, kind: "provider", pluginId: null } };
+    }
     return {
-      payload: await builtins[topic](),
+      payload: await builtin(),
       source: { topic, kind: "builtin", pluginId: null },
     };
+  }
+
+  /**
+   * The built-in reader for a topic, or null when the bar ships none.
+   *
+   * Topics are open, so a topic a provider invented has no entry here — the
+   * index signature on `createBuiltins`' return type is what makes that a
+   * lookup rather than a type error.
+   */
+  function builtinReader(topic: SectionTopic): (() => Promise<SectionPayload>) | null {
+    const reader = builtins[topic];
+    return typeof reader === "function" ? (reader as () => Promise<SectionPayload>) : null;
   }
 
   /**
@@ -218,9 +244,16 @@ export default async function plugin(bb: BbPluginApi) {
         // read instead.
         registry.refresh();
 
+        // Every topic the bar knows about: its own built-ins, plus whatever
+        // providers have invented. Ordered so a provider cannot take the left
+        // edge, and so the layout does not reshuffle as plugins load.
+        const topics = orderTopics([
+          ...new Set<string>([...SECTION_TOPIC_ORDER, ...registry.list().map((p) => p.topic)]),
+        ]);
+
         // Every topic settles independently, and each one may come from a
         // different plugin. One failing source must never blank the bar.
-        const readings = await Promise.all(SECTION_TOPIC_ORDER.map((topic) => readTopic(topic)));
+        const readings = await Promise.all(topics.map((topic) => readTopic(topic)));
 
         return {
           generatedAt: new Date().toISOString(),
@@ -248,7 +281,15 @@ export default async function plugin(bb: BbPluginApi) {
         barDescribeResponseSchema.parse({
           version: PLUGIN_VERSION,
           protocolVersions: ["v1"],
-          topics: [...SECTION_TOPIC_ORDER],
+          // The topics the bar renders right now: its built-ins, plus anything
+          // a loaded provider has contributed. A provider can use this to see
+          // whether a bar is present and what it is showing.
+          topics: orderTopics([
+            ...new Set<string>([
+              ...SECTION_TOPIC_ORDER,
+              ...registry.list().map((provider) => provider.topic),
+            ]),
+          ]),
         }),
 
       providers: () =>
