@@ -89,7 +89,11 @@ export default async function plugin(bb: BbPluginApi) {
         generatedAt: new Date().toISOString(),
         section: metricsSection({
           topic: "lanes",
-          metrics: [{ label: "Codex", value: "18%", tone: "neutral", detail: null }],
+          metrics: [
+            { label: "Codex", value: "18%", tone: "neutral", detail: "weekly window" },
+            // `secondary` metrics drop first on a narrow window.
+            { label: "OR", value: "$42", tone: "neutral", importance: "secondary" },
+          ],
         }),
       }),
     },
@@ -106,8 +110,16 @@ Rules worth knowing:
   colors are the bar's, so the bar looks the same whatever is contributing.
 - **Preformat values.** `value` is a string, not a number, so the provider that
   knows its units owns its formatting (`$0.39`, `23%`, `2.00`).
+- **Mark what can be dropped.** `importance: "secondary"` tells the bar which
+  numbers to shed on a narrow window. Leave it off and the metric is treated as
+  `primary`. Marking *everything* secondary is safe: the bar keeps them all
+  rather than rendering a blank section.
 - **Degrade locally.** A section carries its own `status`; return
-  `unavailableSection({...})` rather than throwing when your source is down.
+  `unavailableSection({...})` rather than throwing when your source is down. An
+  `ok` section with no visible metric, headline, or text is rejected and the bar
+  falls back to its built-in.
+- **`detail` is visible text**, not a tooltip. Use it to explain a degraded
+  section or to qualify a number ("Latest data is 2026-10-05.").
 - **Actions route back to you.** If your section has controls, list them in
   `actions` and implement `section.v1.action`; the bar only knows a button was
   pressed.

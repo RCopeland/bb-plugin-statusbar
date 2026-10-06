@@ -188,6 +188,9 @@ function createUsageReader() {
             value: money(Number(monthRow?.cost ?? 0)),
             tone: "neutral",
             detail: `Month to date (${monthLabel}).`,
+            // The pre-split bar dropped the month figure on a narrow window
+            // and kept today's number, which is the one people glance at.
+            importance: "secondary" as const,
           },
         ],
         headline: money(Number(todayRow?.cost ?? 0)),

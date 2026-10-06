@@ -185,7 +185,12 @@ export const sectionPayloadSchema = z
     text: z.string().nullable().default(null),
     /** Rendered as transport buttons next to the section. */
     actions: z.array(sectionActionSchema).default([]),
-    /** Muted explanation shown when `status` is not `ok`, and inline context otherwise. */
+    /**
+     * Muted explanation rendered inline when the bar is not compact.
+     *
+     * Used both when `status` is not `ok` (why the section is degraded) and as
+     * context on an `ok` section (e.g. "Latest data is 2026-10-05.").
+     */
     detail: z.string().nullable().default(null),
   })
   .strict()
@@ -193,6 +198,12 @@ export const sectionPayloadSchema = z
     // An `ok` section with nothing visible in it would render as an empty gap:
     // the bar would look broken rather than degraded. Refusing it at the schema
     // means the bar falls back to its built-in instead of blanking the topic.
+    //
+    // NOTE: `.refine()` has no JSON Schema equivalent, so this rule is enforced
+    // at runtime but absent from the schema published for `experimental_discoverRpc`.
+    // A provider reading only the published schema will not see it, which is why
+    // the renderer also defends against the compact-mode variant of the same
+    // problem rather than relying on validation alone.
     (section) =>
       section.status !== "ok" ||
       section.metrics.length > 0 ||

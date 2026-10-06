@@ -88,9 +88,16 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
 
   // Providers mark the numbers that can be dropped first, so the bar does not
   // have to hard-code which section loses what.
-  const metrics = compact
+  const kept = compact
     ? section.metrics.filter((metric) => metric.importance === "primary")
     : section.metrics;
+  // If dropping the secondary metrics would leave the section showing nothing,
+  // keep them all: a slightly crowded bar beats a blank gap. This is the case
+  // where a provider marked everything secondary.
+  const metrics =
+    kept.length > 0 || section.headline !== null || section.text !== null
+      ? kept
+      : section.metrics;
 
   /** Inline context text. Visible, not tooltip-only: the pre-split components
    *  showed things like "Latest data is 2026-10-05." as real text. */
@@ -135,7 +142,12 @@ function SectionItem({ section, compact }: { section: SectionPayload; compact: b
         className="flex min-w-0 shrink-0 items-center gap-2"
         role="group"
       >
-        <span className="truncate text-muted-foreground">{section.text}</span>
+        {/* The provider's text may open with a leading glyph such as `♪` or
+            `▶`. It is decorative, so screen readers get the section name from
+            `aria-label` above instead of hearing the symbol. */}
+        <span aria-hidden="true" className="truncate text-muted-foreground">
+          {section.text}
+        </span>
         {/* A text section's own metrics (e.g. track progress) render only when
             there is room, since the text is the load-bearing part. */}
         {metrics
