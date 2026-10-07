@@ -1,10 +1,10 @@
-# @rcopeland/bb-statusbar-section-protocol
+# @robcopeland/bb-statusbar-section-protocol
 
 The wire contract between the **Statusbar** BB plugin and any plugin that
 contributes a section to it.
 
 ```sh
-npm install @rcopeland/bb-statusbar-section-protocol
+npm install @robcopeland/bb-statusbar-section-protocol
 ```
 
 ## Why this is a package
@@ -49,7 +49,7 @@ import {
   SECTION_METHOD_SNAPSHOT,
   sectionSnapshotResponseSchema,
   metricsSection,
-} from "@rcopeland/bb-statusbar-section-protocol";
+} from "@robcopeland/bb-statusbar-section-protocol";
 
 export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(

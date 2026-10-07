@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@rcopeland/bb-statusbar-section-protocol": "*",
+    "@robcopeland/bb-statusbar-section-protocol": "*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

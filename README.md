@@ -17,14 +17,14 @@ packages/
   statusbar/          the bar: overlay, layout, registry, built-in fallbacks
   section-clock/      example provider: contributes a `clock` topic
   section-protocol/   the wire contract, PUBLISHED as
-                      @rcopeland/bb-statusbar-section-protocol
+                      @robcopeland/bb-statusbar-section-protocol
 ```
 
 `section-protocol` lives here for development but is published to npm, so a
 provider in any other repo depends on it normally rather than vendoring a copy:
 
 ```sh
-npm install @rcopeland/bb-statusbar-section-protocol
+npm install @robcopeland/bb-statusbar-section-protocol
 ```
 
 That is what keeps the bar and its providers from drifting. It is a private
@@ -97,7 +97,7 @@ import {
   SECTION_METHOD_SNAPSHOT,
   metricsSection,
   sectionSnapshotResponseSchema,
-} from "@rcopeland/bb-statusbar-section-protocol";
+} from "@robcopeland/bb-statusbar-section-protocol";
 
 export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(
@@ -274,18 +274,51 @@ Same flow in `packages/section-clock` for the provider.
 
 ### Publishing the protocol
 
-The protocol package is consumed as source (see its own README for why), so a
-release is just a version bump and a publish from that directory:
+Publishing is automated by `.github/workflows/publish-protocol.yml`. To release:
 
-```sh
-cd packages/section-protocol
-npm version patch
-npm publish
-```
+1. Bump `version` in `packages/section-protocol/package.json`.
+2. Merge to `main`.
 
-Providers depend on it with a normal semver range. Because the bar and the
-protocol ship from the same repo, bump the protocol version whenever the
-contract changes, and note the change in the bar's release notes.
+That is the whole process. The version is bumped by hand and committed, so what
+is on npm always corresponds to a commit, and a version is never published that
+nobody chose. The workflow is **idempotent**: if the version is already on npm it
+exits successfully without publishing, so merging code that did not touch the
+version is a no-op rather than a failure. It also tags the commit
+`protocol-v<version>` and publishes with provenance.
+
+Authentication is **npm trusted publishing (OIDC)** — no token is stored in this
+repo. GitHub mints a short-lived identity token for the job and npm exchanges it
+for publish rights, so there is no long-lived secret to leak or rotate.
+
+#### One-time npm setup (required)
+
+Trusted publishing must be configured once on npmjs.com, and it only works if the
+repository and workflow filename match exactly:
+
+1. Sign in to npmjs.com and open the package **`@robcopeland/bb-statusbar-section-protocol`**
+   (create it by publishing once manually, or via **Add package**).
+2. Go to **Settings → Trusted publishing** and add a GitHub Actions publisher:
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `RCopeland` |
+   | Repository | `bb-plugin-statusbar` |
+   | Workflow filename | `publish-protocol.yml` |
+   | Environment | *(leave blank)* |
+
+3. Save. The next merge to `main` that bumps the version publishes without any
+   secret.
+
+Renaming the workflow file breaks publishing until the npm setting is updated —
+the filename is part of the trust relationship.
+
+If you would rather not use OIDC, replace the `Publish` step with
+`NPM_TOKEN: ${{ secrets.NPM_TOKEN }}` in its `env` and add a granular access
+token as a repository secret. The OIDC route is preferred: nothing to rotate.
+
+Providers depend on the protocol with a normal semver range. Because the bar and
+the protocol ship from the same repo, bump the protocol version whenever the
+contract changes, and note it in the bar's release notes.
 
 ## Known limitations
 

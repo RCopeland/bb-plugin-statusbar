@@ -49,9 +49,9 @@ import {
   sectionSnapshotResponseSchema,
   type SectionPayload,
   type SectionTopic,
-} from "@rcopeland/bb-statusbar-section-protocol";
+} from "@robcopeland/bb-statusbar-section-protocol";
 import { createBuiltins, spotifyDefaultDeviceId, spotifyDisruptiveActionsAllowed } from "./builtins.js";
-import type { BuiltinTopic } from "@rcopeland/bb-statusbar-section-protocol";
+import type { BuiltinTopic } from "@robcopeland/bb-statusbar-section-protocol";
 import { createProviderRegistry } from "./providers.js";
 import { controlSpotify, likeSpotifyTrack } from "./spotify-controls.js";
 

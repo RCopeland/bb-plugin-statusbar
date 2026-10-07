@@ -1,5 +1,5 @@
 {
-  "name": "@rcopeland/bb-statusbar-section-protocol",
+  "name": "@robcopeland/bb-statusbar-section-protocol",
   "version": "0.1.0",
   "description": "Wire contract shared by the Statusbar BB plugin and its section providers.",
   "license": "MIT",

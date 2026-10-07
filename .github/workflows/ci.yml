@@ -1,0 +1,75 @@
+name: CI
+
+# Runs on every push to a branch and every PR. This is the gate that catches a
+# broken build before it reaches main, because the publish workflow only runs
+# AFTER a merge - by which point a type error is already in the history and the
+# only fix is a follow-up commit.
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Node version BB 0.44 bundles, so a type or runtime
+          # difference between CI and a real BB host shows up here.
+          node-version: "22"
+          cache: npm
+
+      # Workspace install: links packages/section-protocol into the bar and the
+      # clock provider, which is what makes their imports resolve.
+      - run: npm ci
+
+      - name: Typecheck all packages
+        run: npm run typecheck
+
+  # A merge to main is what triggers a publish, so verify the two installable
+  # plugins still BUILD from a clean checkout. A package can typecheck and still
+  # fail `bb plugin build` (a bad bb.* manifest path, a missing entry file), and
+  # that failure would otherwise only surface when someone tried to install it.
+  build-plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install the BB CLI
+        run: npm install --global bb-app@0.44.0
+
+      - name: Build the statusbar plugin
+        working-directory: packages/statusbar
+        run: bb plugin build
+
+      - name: Build the clock provider
+        working-directory: packages/section-clock
+        run: bb plugin build
+
+      # The artifacts are the real deliverable; assert they exist rather than
+      # trusting the command's exit code alone.
+      - name: Assert build artifacts exist
+        run: |
+          set -euo pipefail
+          for f in packages/statusbar/dist/server.js \
+                   packages/statusbar/dist/app.js \
+                   packages/section-clock/dist/server.js; do
+            test -s "$f" || { echo "missing or empty: $f"; exit 1; }
+            echo "ok: $f"
+          done

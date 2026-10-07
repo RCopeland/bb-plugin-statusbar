@@ -1,0 +1,128 @@
+name: Publish protocol
+
+# Publishes @robcopeland/bb-statusbar-section-protocol when its version changes
+# on main.
+#
+# RELEASING
+#
+#   1. Bump `version` in packages/section-protocol/package.json.
+#   2. Merge to main.
+#
+# That is the whole process. The version is bumped by hand and committed, so
+# what is on npm always corresponds to a commit in the history, and a version is
+# never published that nobody chose.
+#
+# The job is IDEMPOTENT: if the version in package.json is already on npm, it
+# exits successfully without publishing. Merging the same code twice, or merging
+# changes that did not touch the version, is a no-op rather than a failure. That
+# is deliberate - a workflow that fails on an ordinary merge trains people to
+# ignore it.
+#
+# AUTHENTICATION uses npm trusted publishing (OIDC), not a stored token. GitHub
+# mints a short-lived identity token for this job and npm exchanges it for
+# publish rights; there is no long-lived secret in this repo to leak or rotate.
+# It requires a one-time configuration on npmjs.com naming THIS repository and
+# THIS workflow filename - see "Trusted publishing" in the README. Provenance
+# attestation is automatic under this scheme.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      # Only the protocol is published. A change to the bar or the clock does
+      # not publish anything, because neither is distributed through npm.
+      - "packages/section-protocol/**"
+
+  # Allows publishing from the Actions tab without an empty commit, e.g. to
+  # retry after a transient registry failure.
+  workflow_dispatch:
+
+permissions:
+  # Required by trusted publishing: lets the job request the OIDC token.
+  id-token: write
+  # Required to create the release tag below.
+  contents: write
+
+concurrency:
+  # Never let two publishes race: the second would fail on an existing version.
+  group: publish-protocol
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          # Sets the registry for `npm publish` below.
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs a recent npm; the version bundled with Node
+      # 22 predates it.
+      - name: Update npm
+        run: npm install --global npm@latest
+
+      - run: npm ci
+
+      # Publishing code that does not typecheck is worse than not publishing.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Read local and published versions
+        id: versions
+        working-directory: packages/section-protocol
+        run: |
+          set -euo pipefail
+          LOCAL=$(node -p "require('./package.json').version")
+          echo "local=$LOCAL" >> "$GITHUB_OUTPUT"
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+
+          # An unpublished package makes `npm view` exit non-zero, which is the
+          # normal state for a brand-new package rather than an error.
+          if PUBLISHED=$(npm view "$(node -p "require('./package.json').name")" version 2>/dev/null); then
+            echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "local version:     $LOCAL"
+          echo "published version: ${PUBLISHED:-<none>}"
+
+      - name: Decide whether to publish
+        id: decide
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.versions.outputs.local }}" = "${{ steps.versions.outputs.published }}" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ steps.versions.outputs.name }}@${{ steps.versions.outputs.local }} is already published; nothing to do."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Publishing ${{ steps.versions.outputs.name }}@${{ steps.versions.outputs.local }}."
+          fi
+
+      - name: Publish
+        if: steps.decide.outputs.publish == 'true'
+        working-directory: packages/section-protocol
+        # No NODE_AUTH_TOKEN: authentication comes from the OIDC exchange.
+        # --provenance links the tarball to this commit and workflow.
+        run: npm publish --provenance --access public
+
+      # Tags the commit that actually produced the published code, so the npm
+      # version can be traced back to a point in history.
+      - name: Tag the release
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.versions.outputs.local }}
+        run: |
+          set -euo pipefail
+          TAG="protocol-v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Tag $TAG already exists; skipping."
+            exit 0
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
