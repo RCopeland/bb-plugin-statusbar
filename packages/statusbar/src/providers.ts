@@ -34,7 +34,7 @@ import {
   sectionActionResponseSchema,
   sectionSnapshotResponseSchema,
   type SectionTopic,
-} from "bb-statusbar-section-protocol";
+} from "@rcopeland/bb-statusbar-section-protocol";
 
 /** One plugin that advertises a section, as the host reports it. */
 export interface DiscoveredProvider {

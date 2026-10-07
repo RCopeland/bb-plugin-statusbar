@@ -33,7 +33,7 @@ import {
   sectionActionResponseSchema,
   sectionSnapshotResponseSchema,
   textSection,
-} from "bb-statusbar-section-protocol";
+} from "@rcopeland/bb-statusbar-section-protocol";
 
 /**
  * The topic this provider claims.

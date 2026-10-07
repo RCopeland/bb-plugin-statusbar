@@ -22,7 +22,7 @@ import {
   sectionPayloadSchema,
   unavailableSection,
   type SectionPayload,
-} from "bb-statusbar-section-protocol";
+} from "@rcopeland/bb-statusbar-section-protocol";
 
 const USAGE_DB_PATH = join(homedir(), ".bb", "plugins", "usage", "data.db");
 const BB_DB_PATH = join(homedir(), ".bb", "bb.db");

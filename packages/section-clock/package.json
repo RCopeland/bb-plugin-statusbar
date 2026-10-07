@@ -7,8 +7,8 @@
     "bbPluginSdk": ">=0.5.29"
   },
   "bb": {
-    "name": "Statusbar — Clock",
-    "description": "Example Sectionbar provider: adds the current time and date as a section.",
+    "name": "Statusbar \u2014 Clock",
+    "description": "Example Statusbar section provider: adds the current time and date to the bar.",
     "branding": {
       "icon": "Gauge"
     },
@@ -18,12 +18,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "bb-statusbar-section-protocol": "*",
+    "@rcopeland/bb-statusbar-section-protocol": "*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.5.29",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "license": "MIT"
 }

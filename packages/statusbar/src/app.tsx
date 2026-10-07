@@ -20,7 +20,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
-import type { SectionPayload } from "bb-statusbar-section-protocol";
+import type { SectionPayload } from "@rcopeland/bb-statusbar-section-protocol";
 import type { Snapshot, rpcContract } from "./server";
 
 /**

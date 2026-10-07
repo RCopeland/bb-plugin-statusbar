@@ -14,10 +14,22 @@ provider plugin or by a built-in fallback reader.
 
 ```
 packages/
-  section-protocol/   the wire contract shared by the bar and its providers
   statusbar/          the bar: overlay, layout, registry, built-in fallbacks
   section-clock/      example provider: contributes a `clock` topic
+  section-protocol/   the wire contract, PUBLISHED as
+                      @rcopeland/bb-statusbar-section-protocol
 ```
+
+`section-protocol` lives here for development but is published to npm, so a
+provider in any other repo depends on it normally rather than vendoring a copy:
+
+```sh
+npm install @rcopeland/bb-statusbar-section-protocol
+```
+
+That is what keeps the bar and its providers from drifting. It is a private
+workspace package locally and a public npm package externally — the same source,
+built by whichever workspace consumes it.
 
 `statusbar` and `section-clock` are separately installable BB plugins.
 `section-protocol` is a workspace package compiled into both; it is not a plugin
@@ -85,7 +97,7 @@ import {
   SECTION_METHOD_SNAPSHOT,
   metricsSection,
   sectionSnapshotResponseSchema,
-} from "bb-statusbar-section-protocol";
+} from "@rcopeland/bb-statusbar-section-protocol";
 
 export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(
@@ -259,6 +271,21 @@ bb plugin rpc call statusbar providers --json   # which providers are discovered
 ```
 
 Same flow in `packages/section-clock` for the provider.
+
+### Publishing the protocol
+
+The protocol package is consumed as source (see its own README for why), so a
+release is just a version bump and a publish from that directory:
+
+```sh
+cd packages/section-protocol
+npm version patch
+npm publish
+```
+
+Providers depend on it with a normal semver range. Because the bar and the
+protocol ship from the same repo, bump the protocol version whenever the
+contract changes, and note the change in the bar's release notes.
 
 ## Known limitations
 
