@@ -274,30 +274,63 @@ Same flow in `packages/section-clock` for the provider.
 
 ### Publishing the protocol
 
-Publishing is automated by `.github/workflows/publish-protocol.yml`. To release:
+Publishing is automated by `.github/workflows/publish-protocol.yml` and uses
+**staged publishing** plus **npm trusted publishing (OIDC)**. To release:
 
 1. Bump `version` in `packages/section-protocol/package.json`.
 2. Merge to `main`.
+3. Review and approve the staged version with 2FA.
 
-That is the whole process. The version is bumped by hand and committed, so what
-is on npm always corresponds to a commit, and a version is never published that
-nobody chose. The workflow is **idempotent**: if the version is already on npm it
-exits successfully without publishing, so merging code that did not touch the
-version is a no-op rather than a failure. It also tags the commit
-`protocol-v<version>` and publishes with provenance.
+Step 3 is the point of staged publishing: the version does **not** go live until
+a maintainer has looked at it and approved it. A compromised workflow, a bad
+dependency, or a commit that slipped through review therefore produces a pending
+release rather than a live one that people install.
 
-Authentication is **npm trusted publishing (OIDC)** — no token is stored in this
-repo. GitHub mints a short-lived identity token for the job and npm exchanges it
-for publish rights, so there is no long-lived secret to leak or rotate.
+```sh
+npm stage list                 # what is waiting
+npm stage view <stage-id>      # inspect it
+npm stage approve <stage-id>   # 2FA prompt; this is the step that publishes
+```
+
+You can also approve from the **Staged Packages** tab on npmjs.com.
+
+Approval cannot be automated: npm requires proof of presence, so an OIDC token is
+not accepted for `npm stage approve`. That is deliberate.
+
+The version is bumped by hand and committed, so what is on npm always corresponds
+to a commit, and a version is never published that nobody chose. The workflow is
+**idempotent** — if the version is already published it exits successfully, so
+merging code that did not touch the version is a no-op rather than a failure. It
+tags the commit `protocol-v<version>` after a successful stage.
+
+Authentication is OIDC, so no token is stored in this repo. GitHub mints a
+short-lived identity token for the job and npm exchanges it for publish rights,
+which is why there is no long-lived secret to leak or rotate.
 
 #### One-time npm setup (required)
 
-Trusted publishing must be configured once on npmjs.com, and it only works if the
-repository and workflow filename match exactly:
+Trusted publishing is configured once per package on npmjs.com, and it only works
+if the repository and workflow filename match exactly. Renaming the workflow file
+breaks publishing until the npm setting is updated — the filename is part of the
+trust relationship.
 
-1. Sign in to npmjs.com and open the package **`@robcopeland/bb-statusbar-section-protocol`**
-   (create it by publishing once manually, or via **Add package**).
-2. Go to **Settings → Trusted publishing** and add a GitHub Actions publisher:
+**Bootstrapping a package that does not exist yet.** npm requires a package to
+exist before its settings page offers a Trusted Publisher section, but
+`npm stage publish` can create a new package (since npm CLI 11.15.0). Since
+staging only needs a *stage-only* trusted publisher, the bootstrap path is:
+
+1. Create the package with one local staged publish from this directory:
+
+   ```sh
+   npm install -g npm@latest    # `npm stage` needs CLI >= 11.15.0
+   cd packages/section-protocol
+   npm stage publish --access public
+   ```
+
+   This creates the package and leaves the first version in the staged queue.
+
+2. The package now appears on npmjs.com. Open it and go to
+   **Settings → Trusted publishing** → **GitHub Actions**:
 
    | Field | Value |
    | --- | --- |
@@ -305,16 +338,27 @@ repository and workflow filename match exactly:
    | Repository | `bb-plugin-statusbar` |
    | Workflow filename | `publish-protocol.yml` |
    | Environment | *(leave blank)* |
+   | Allowed actions | leave **Allow npm publish** UNCHECKED |
 
-3. Save. The next merge to `main` that bumps the version publishes without any
-   secret.
+   Leaving direct publishing unchecked is what restricts the workflow to
+   staging, so every release needs your 2FA approval.
 
-Renaming the workflow file breaks publishing until the npm setting is updated —
-the filename is part of the trust relationship.
+3. Approve the first staged version (`npm stage approve <stage-id>`). From then
+   on, merges to `main` stage automatically.
 
-If you would rather not use OIDC, replace the `Publish` step with
-`NPM_TOKEN: ${{ secrets.NPM_TOKEN }}` in its `env` and add a granular access
-token as a repository secret. The OIDC route is preferred: nothing to rotate.
+A newly created trusted publisher must complete its **first successful stage
+within 2 days** or it expires and cannot be edited; you would have to delete and
+recreate it. Configure it when you are ready to release, not in advance.
+
+Trusted publisher connections cannot be edited after creation. To change one,
+delete it and create a new one.
+
+#### Why not a token
+
+An `NPM_TOKEN` secret would work, but it is a long-lived credential that can
+publish as you until revoked, and it must be rotated. OIDC tokens are minted per
+run, bound to this repo and this workflow file, and expire in minutes. Combined
+with staging, a leaked credential has nothing durable to steal.
 
 Providers depend on the protocol with a normal semver range. Because the bar and
 the protocol ship from the same repo, bump the protocol version whenever the

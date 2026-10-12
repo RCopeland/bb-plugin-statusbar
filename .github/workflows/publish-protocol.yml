@@ -1,16 +1,29 @@
 name: Publish protocol
 
 # Publishes @robcopeland/bb-statusbar-section-protocol when its version changes
-# on main.
+# on main, using STAGED publishing.
 #
 # RELEASING
 #
 #   1. Bump `version` in packages/section-protocol/package.json.
-#   2. Merge to main.
+#   2. Merge to main.            -> this workflow STAGES the version
+#   3. Review and approve it.    -> you, with 2FA
 #
-# That is the whole process. The version is bumped by hand and committed, so
-# what is on npm always corresponds to a commit in the history, and a version is
-# never published that nobody chose.
+# Step 3 is the point of staged publishing: the version does not go live until a
+# maintainer has looked at it and approved with two-factor auth. So a compromised
+# workflow, a bad dependency, or a commit that slipped through review produces a
+# PENDING release rather than a live one that people install.
+#
+#   npm stage list                 # what is waiting
+#   npm stage view <stage-id>      # inspect it
+#   npm stage approve <stage-id>   # 2FA prompt; this is what publishes
+#
+# Approval cannot be automated: npm requires proof of presence, so an OIDC token
+# is not accepted for `npm stage approve`. That is deliberate.
+#
+# The version is bumped by hand and committed, so what is on npm always
+# corresponds to a commit in the history, and a version is never published that
+# nobody chose.
 #
 # The job is IDEMPOTENT: if the version in package.json is already on npm, it
 # exits successfully without publishing. Merging the same code twice, or merging
@@ -104,12 +117,35 @@ jobs:
             echo "::notice::Publishing ${{ steps.versions.outputs.name }}@${{ steps.versions.outputs.local }}."
           fi
 
-      - name: Publish
+      - name: Stage the release
         if: steps.decide.outputs.publish == 'true'
         working-directory: packages/section-protocol
         # No NODE_AUTH_TOKEN: authentication comes from the OIDC exchange.
-        # --provenance links the tarball to this commit and workflow.
-        run: npm publish --provenance --access public
+        #
+        # `npm stage publish` submits the version to the staging area; it does
+        # NOT make it public. A maintainer approves it with 2FA afterwards.
+        # Provenance is attached automatically under trusted publishing.
+        run: npm stage publish --access public
+
+      - name: State what happens next
+        if: steps.decide.outputs.publish == 'true'
+        run: |
+          {
+            echo "### Staged for review"
+            echo ""
+            echo "`${{ steps.versions.outputs.name }}@${{ steps.versions.outputs.local }}` was submitted to the staging area."
+            echo "It is **not public yet**."
+            echo ""
+            echo "Review and approve it with 2FA:"
+            echo ""
+            echo '```sh'
+            echo "npm stage list"
+            echo "npm stage view <stage-id>"
+            echo "npm stage approve <stage-id>"
+            echo '```'
+            echo ""
+            echo "Or approve from the **Staged Packages** tab on npmjs.com."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Tags the commit that actually produced the published code, so the npm
       # version can be traced back to a point in history.
