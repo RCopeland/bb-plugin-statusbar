@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Statusbar",
-    "description": "AI usage cost, model lane headroom, host resources, and Spotify now playing in one bar at the bottom of the window.",
+    "description": "AI usage cost, model lane headroom, and host resources in one bar at the bottom of the window. Additional sections (e.g. Spotify) are contributed by provider plugins.",
     "branding": {
       "icon": "Gauge"
     },
@@ -41,6 +41,6 @@
     "hono": "^4.11.9",
     "typescript": "^5.7.0"
   },
-  "description": "A single status bar at the bottom of the BB window showing AI usage cost, model lane headroom, host resources, and Spotify now playing.",
+  "description": "A single status bar at the bottom of the BB window showing AI usage cost, model lane headroom, and host resources. Sections are extensible: provider plugins can claim a topic, including built-in ones.",
   "license": "MIT"
 }
