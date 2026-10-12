@@ -191,7 +191,7 @@ Each topic reads from a provider when one is present, otherwise from the built-i
 | Usage | `~/.bb/plugins/usage/data.db` (read-only, `node:sqlite`) | 60s |
 | Lanes | `bb.sdk.system.usageLimits()` + OpenRouter `/api/v1/credits` | 60s |
 | Host | In-plugin sampling (`node:os`, `df -Pk`) | 5s |
-| Spotify | Spotify Web API, using bb-spotify's credentials | 3s |
+| Spotify | **Not built in** — supplied by `bb-statusbar-spotify` | — |
 
 The bar polls `snapshot()` every 3 seconds. Each section is cached server-side
 with its own TTL, so a tick is mostly memory reads.
@@ -209,53 +209,39 @@ propagate here.
 
 ## Spotify
 
-### Transport controls
+The Spotify section is **not built in**. It is contributed by a separate plugin,
+[`bb-statusbar-spotify`](https://github.com/RCopeland/bb-statusbar-spotify),
+which claims the `spotify` topic and owns its own Spotify credentials.
 
-The bar carries previous, play/pause, next, and save-to-Liked-Songs. They defer
-to bb-spotify's own gating rather than inventing a second policy:
+Installing that plugin is what puts Spotify in the bar. Without it the topic has
+no reader and produces no section at all.
 
-- **Play/resume requires bb-spotify's `allowDisruptiveActions` setting.** It is
-  off by default. When off, the bar surfaces a toast naming the setting instead
-  of failing silently. Enable it with:
+### Why it moved out
 
-  ```sh
-  bb plugin config spotify set allowDisruptiveActions true
-  ```
+The bar previously shipped a built-in Spotify reader. To avoid two independent
+refresh flows racing on one token, that reader borrowed bb-spotify's credentials
+read-only and deliberately refused to persist a rotated refresh token. The
+result was that the Spotify slot depended on a *third* plugin being installed and
+authorized.
 
-- Playback targets bb-spotify's configured `defaultDeviceId` when set.
-- Pause, skip, previous, and like are never gated.
-- Save-to-Liked-Songs uses `PUT /me/library`. The older `PUT /me/tracks?uris=…`
-  now answers 403 Forbidden even with the `user-library-modify` scope.
+Moving the section into its own plugin fixed that: it owns its credentials, so it
+can persist rotation safely. The tradeoff is that the topic now has no fallback —
+uninstalling the provider leaves the slot empty rather than degrading to a
+reading computed here. That is accepted deliberately; a fallback that has to
+borrow another plugin's secrets is not really a fallback.
 
-These controls belong to the built-in Spotify reader. When Spotify is served by
-a provider, that provider owns its own actions — the bar just renders the buttons
-it advertises and routes clicks to it.
+### Setup
 
-### Credentials
+See that plugin's README. In short: create a Spotify developer app, register its
+redirect URI, set the client ID and secret, then run its auth flow.
 
-Spotify credentials are per-plugin (`<dataDir>/plugins/<id>/secrets/`, mode
-0600). Duplicating them would mean two independent refresh flows racing on token
-rotation. The built-in reader therefore reads **bb-spotify's own credentials,
-read-only**:
+### The `spotify` topic is still "built-in"
 
-| Input | Location |
-| --- | --- |
-| `clientId` (not a secret) | `bb.db` → `plugin_settings`, `plugin_id='spotify'`, `key='clientId'` |
-| `clientSecret` | `~/.bb/plugins/spotify/secrets/clientSecret` |
-| `refreshToken` | `~/.bb/plugins/spotify/secrets/refreshToken` |
-
-Rules followed:
-
-- **Read-only.** It never writes bb-spotify's files.
-- **Rotation is ignored.** A rotated `refresh_token` is used for the current
-  access token but not persisted; bb-spotify owns that value.
-- **Values stay server-side.** No credential is logged, written to disk,
-  returned over RPC, or placed in KV.
-- **Fails soft.** Missing or unreadable credentials render `not connected`.
-
-BB's install prompt states the trust model: *"Plugins are full-trust code running
-inside the BB server. They can read all local BB data, including other plugins'
-secrets."*
+`BUILTIN_TOPICS` in the protocol package still lists `spotify`, and that is
+intentional. In that constant, "built-in" means *the bar knows this slot exists
+and where it goes in the row* — it is layout identity, not data ownership.
+Removing it would reclassify the topic as provider-invented and sort it to the
+right-hand end of the bar, which is not what anyone wants.
 
 ## Development
 
@@ -367,7 +353,9 @@ contract changes, and note it in the bar's release notes.
 ## Known limitations
 
 - Depends on BB's secret file layout and on the plugin server having read access
-  to it. If either changes, the Spotify section degrades to `not connected`.
+  to it, for the usage reader's database.
+- The `spotify` topic has no built-in fallback, so uninstalling
+  `bb-statusbar-spotify` leaves that slot empty rather than degrading.
 - Built-in usage and lanes logic is duplicated and can drift from its originals.
 - Providers cannot be authenticated on this BB version (see above).
 - The bar is a fixed overlay. `experimental_appOverlay` supplies no chrome,

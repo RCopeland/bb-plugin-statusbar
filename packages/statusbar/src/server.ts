@@ -20,17 +20,18 @@
 // split: bb-plugin-lanes can publish its own headroom instead of this plugin
 // carrying a copy of its logic that silently drifts.
 //
-// The fallbacks remain, so installing this plugin alone still produces a full
-// bar, and disabling a provider degrades to the built-in rather than to a gap.
+// The fallbacks remain for the topics this plugin still computes, so installing
+// it alone still produces a full bar, and disabling a provider degrades to the
+// built-in rather than to a gap.
 //
-// SPOTIFY CREDENTIALS
+// SPOTIFY
 //
-// The built-in Spotify reader still reads bb-spotify's credentials read-only
-// (clientId from plugin_settings, clientSecret/refreshToken from its 0600
-// secret files) rather than duplicating them: two independent refresh flows
-// would race on token rotation. Credential values stay server-side and are
-// never returned over RPC. The preferred path is for bb-spotify to publish the
-// section itself, at which point this reader becomes the offline fallback.
+// There is no built-in Spotify reader or control path. That section is supplied
+// entirely by bb-plugin-statusbar-spotify, a separate plugin that owns its own
+// Spotify credentials. The bar's built-in previously read bb-spotify's
+// credentials read-only, which made the Spotify slot depend on a second plugin
+// being installed and authorized; removing it means the slot has no fallback,
+// so uninstalling the provider leaves it empty rather than blanking the bar.
 
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -50,10 +51,9 @@ import {
   type SectionPayload,
   type SectionTopic,
 } from "@robcopeland/bb-statusbar-section-protocol";
-import { createBuiltins, spotifyDefaultDeviceId, spotifyDisruptiveActionsAllowed } from "./builtins.js";
+import { createBuiltins } from "./builtins.js";
 import type { BuiltinTopic } from "@robcopeland/bb-statusbar-section-protocol";
 import { createProviderRegistry } from "./providers.js";
-import { controlSpotify, likeSpotifyTrack } from "./spotify-controls.js";
 
 export const PLUGIN_VERSION = "0.2.0";
 
@@ -202,41 +202,14 @@ export default async function plugin(bb: BbPluginApi) {
   /**
    * Runs a built-in transport action.
    *
-   * Only the Spotify section has built-in controls; every other action id is a
-   * programming error rather than a user-visible failure.
+   * There are none any more. This existed for the Spotify section, which had
+   * built-in controls because the bar computed that reading itself; the topic
+   * is now supplied entirely by bb-plugin-statusbar-spotify, which owns its own
+   * action handler. Kept as an explicit refusal rather than deleted, so a topic
+   * reaching here is a visible error instead of a silently ignored click.
    */
   async function runBuiltinAction(topic: SectionTopic, actionId: string): Promise<{ message: string }> {
-    if (topic !== "spotify") {
-      throw new Error(`No built-in action "${actionId}" for the "${topic}" section.`);
-    }
-
-    if (actionId === "like") {
-      const message = await likeSpotifyTrack({
-        token: builtins.spotifyToken,
-        invalidate: builtins.invalidateSpotify,
-      });
-      return { message };
-    }
-
-    if (!["pause", "play", "next", "previous"].includes(actionId)) {
-      throw new Error(`Unknown Spotify action "${actionId}".`);
-    }
-
-    if (actionId === "play" && !spotifyDisruptiveActionsAllowed()) {
-      // Starting playback is the disruptive case: bb-spotify gates it behind an
-      // explicit opt-in, so honor the same setting rather than overriding it.
-      throw new Error(
-        'Starting playback is disabled. Enable "Allow agents to start/resume playback" in the Spotify plugin settings, or use the Spotify plugin\'s own controls.',
-      );
-    }
-
-    const message = await controlSpotify({
-      action: actionId as "pause" | "play" | "next" | "previous",
-      token: builtins.spotifyToken,
-      invalidate: builtins.invalidateSpotify,
-      deviceId: spotifyDefaultDeviceId(),
-    });
-    return { message };
+    throw new Error(`No built-in action "${actionId}" for the "${topic}" section.`);
   }
 
   bb.rpc.register(
@@ -272,14 +245,15 @@ export default async function plugin(bb: BbPluginApi) {
       section_action: async ({ topic, actionId }) => {
         const discovered = registry.get(topic);
         if (discovered !== null) {
-          // Unlike a read, an action is not silently rerouted to the built-in on
-          // failure: the user pressed a button that the provider advertised, so
-          // the provider's own error is the honest answer. Rerouting a Spotify
-          // click to a different plugin's control path would be worse than
-          // reporting the failure.
+          // An action is never silently rerouted on failure: the user pressed a
+          // button that the provider advertised, so the provider's own error is
+          // the honest answer.
           return registry.resolve(discovered).action(actionId);
         }
-        return runBuiltinAction(topic, actionId);
+        // There are no built-in controls. Every action the bar renders belongs
+        // to a provider, so reaching here means the click outlived the provider
+        // that advertised it (a disabled or reloaded plugin).
+        throw new Error(`No provider is supplying the "${topic}" section, so "${actionId}" cannot be run.`);
       },
 
       describe: () =>

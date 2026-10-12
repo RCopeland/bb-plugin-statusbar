@@ -1,5 +1,6 @@
-AI usage cost, model lane headroom, host resources, and Spotify now playing —
-in one bar at the bottom of the BB window.
+AI usage cost, model lane headroom, and host resources — in one bar at the
+bottom of the BB window. Other sections, Spotify included, are contributed by
+provider plugins.
 
 ## What you get
 
@@ -11,7 +12,8 @@ A single row that stays visible while you work:
   show when they refill; metered lanes (OpenRouter) show the balance and never
   pretend it comes back on its own.
 - **Host** — CPU, memory, disk, and load for the machine BB is running on.
-- **Spotify** — what is playing right now, with transport controls.
+- **Extensible** — any plugin can claim a topic, including built-in ones.
+  Spotify is supplied this way, by `bb-statusbar-spotify`.
 
 Each section degrades on its own: a source that is missing or failing shows a
 short muted label and never blanks the rest of the bar.
@@ -69,9 +71,10 @@ The built-in usage and lanes readers are still copies of the logic in the Usage
 Footer and Lanes plugins. They exist so the bar stands alone; they are the
 fallback, not the ambition.
 
-For Spotify, the built-in reader reads the Spotify plugin's credentials
-read-only rather than duplicating them, so there is still exactly one owner of
-the refresh token. Credentials never leave the server.
+There is no built-in Spotify reader. That section is a separate plugin
+(`bb-statusbar-spotify`) which owns its own credentials, so the refresh token has
+exactly one owner and no two refresh flows race. Credentials never leave the
+server.
 
-Nothing is sent anywhere except the Spotify and OpenRouter APIs you already use
-for those features.
+Nothing is sent anywhere except the OpenRouter API and whatever a section
+provider plugin talks to on its own behalf.
