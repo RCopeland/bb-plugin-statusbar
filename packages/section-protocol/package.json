@@ -19,6 +19,15 @@
     "getbb",
     "statusbar"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RCopeland/bb-plugin-statusbar.git",
+    "directory": "packages/section-protocol"
+  },
+  "homepage": "https://github.com/RCopeland/bb-plugin-statusbar#readme",
+  "bugs": {
+    "url": "https://github.com/RCopeland/bb-plugin-statusbar/issues"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
