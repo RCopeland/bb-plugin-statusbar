@@ -1,6 +1,6 @@
 {
   "name": "@robcopeland/bb-statusbar-section-protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wire contract shared by the Statusbar BB plugin and its section providers.",
   "license": "MIT",
   "type": "module",
