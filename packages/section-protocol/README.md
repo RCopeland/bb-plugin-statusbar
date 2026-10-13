@@ -38,7 +38,7 @@ build script; nothing else here depends on shipping source.
 | `SECTION_METHOD_SNAPSHOT` / `SECTION_METHOD_ACTION` | Method names |
 | `metricsSection`, `textSection`, `unavailableSection` | Builders for a payload |
 | `orderTopics` | The bar's display ordering rule |
-| `BUILTIN_TOPICS` / `SECTION_TOPIC_ORDER` | Topics the bar ships readers for |
+| `KNOWN_TOPICS` / `SECTION_TOPIC_ORDER` | Topics the bar gives a fixed position in the row |
 
 ## Quick start
 

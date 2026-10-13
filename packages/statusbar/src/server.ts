@@ -35,8 +35,8 @@
 // provider removes its section. That is intended, not a fault.
 //
 // Whether a topic is *known* is separate from whether it is *supplied*: a topic
-// listed in the protocol's BUILTIN_TOPICS keeps its declared position in the
-// row even while unprovided, and `snapshot` reports it in `sources` with a null
+// listed in the protocol's KNOWN_TOPICS keeps its declared position in the row
+// even while unprovided, and `snapshot` reports it in `sources` with a null
 // pluginId so an unsupplied topic is distinguishable from an unknown one.
 
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -156,7 +156,7 @@ export default async function plugin(bb: BbPluginApi) {
   ): Promise<{ payload: SectionPayload | null; source: SectionSource }> {
     const discovered = registry.get(topic);
 
-    // The bar knows this topic - it is in BUILTIN_TOPICS, so it has a declared
+    // The bar knows this topic - it is in KNOWN_TOPICS, so it has a declared
     // position in the row - but nothing is supplying it right now.
     if (discovered === null) {
       return { payload: null, source: { topic, kind: "provider", pluginId: null } };

@@ -222,7 +222,7 @@ fault, and it is the tradeoff for having exactly one implementation of each
 reading.
 
 Known-but-unsupplied is still distinguishable from never-heard-of: a topic listed
-in the protocol's `BUILTIN_TOPICS` keeps its declared position in the row, and
+in the protocol's `KNOWN_TOPICS` keeps its declared position in the row, and
 `snapshot` reports it in `sources` with a null `pluginId`.
 
 ## Spotify
@@ -253,19 +253,15 @@ borrow another plugin's secrets is not really a fallback.
 See that plugin's README. In short: create a Spotify developer app, register its
 redirect URI, set the client ID and secret, then run its auth flow.
 
-### Why `BUILTIN_TOPICS` still lists these four
+### Why `KNOWN_TOPICS` lists these four
 
-The name is historical. It used to mean "the bar ships a reader for these", but
-the bar now computes no readings at all.
+`KNOWN_TOPICS` is **layout identity, not data ownership**. The bar computes no
+readings at all, so the constant says only which slots exist and where they sit
+in the row.
 
-What the constant still means is *layout identity*: the bar knows this slot
-exists and where it goes in the row. Removing an entry would reclassify that
-topic as provider-invented and sort it to the right-hand end, which is not what
-anyone wants. It is not a statement about data ownership.
-
-Renaming it (`KNOWN_TOPICS` would be more honest) is not worth doing yet: it is
-part of the published contract and every existing provider imports it, so the
-rename is a breaking change for a cosmetic gain.
+Removing an entry would reclassify that topic as provider-invented and sort it to
+the right-hand end, which is not what anyone wants. A topic a provider invents is
+equally renderable; it just sorts after these.
 
 ## Development
 

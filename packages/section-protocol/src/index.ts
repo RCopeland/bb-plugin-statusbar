@@ -93,25 +93,19 @@ export type SectionTopic = z.infer<typeof sectionTopicSchema>;
 /**
  * Topics the bar knows by name and gives a fixed position in the row.
  *
- * The name is historical. It used to mean "the bar ships a reader for these",
- * but the bar now computes no readings at all - every one is supplied by a
- * provider plugin.
+ * These are LAYOUT IDENTITY, not data ownership. The bar computes no readings
+ * itself - every section is supplied by a provider plugin - so this constant
+ * says only which slots exist and where they sit. A topic listed here keeps its
+ * declared position in `SECTION_TOPIC_ORDER` even while nothing is supplying it.
  *
- * What the constant still means is LAYOUT IDENTITY, not data ownership: a topic
- * listed here is known to the bar and sorts in the declared order of
- * `SECTION_TOPIC_ORDER`, even while nothing supplies it. A topic a provider
- * invents is equally renderable but sorts after these, alphabetically.
- *
- * Renaming it to something like `KNOWN_TOPICS` would be more honest, but it is
- * part of the published contract and every existing provider imports it, so the
- * rename would be a breaking change for a cosmetic gain. The doc comment is the
- * cheap fix.
+ * A topic a provider invents is equally renderable; it simply sorts after these,
+ * alphabetically.
  */
-export const BUILTIN_TOPICS = ["usage", "lanes", "host", "spotify"] as const;
-export type BuiltinTopic = (typeof BUILTIN_TOPICS)[number];
+export const KNOWN_TOPICS = ["usage", "lanes", "host", "spotify"] as const;
+export type KnownTopic = (typeof KNOWN_TOPICS)[number];
 
-function isBuiltinTopic(topic: string): topic is BuiltinTopic {
-  return (BUILTIN_TOPICS as readonly string[]).includes(topic);
+function isKnownTopic(topic: string): topic is KnownTopic {
+  return (KNOWN_TOPICS as readonly string[]).includes(topic);
 }
 
 /**
@@ -123,7 +117,7 @@ function isBuiltinTopic(topic: string): topic is BuiltinTopic {
  * contract rather than in the bar: a provider author can read the intended
  * layout without guessing.
  */
-export const SECTION_TOPIC_ORDER: readonly BuiltinTopic[] = [
+export const SECTION_TOPIC_ORDER: readonly KnownTopic[] = [
   "usage",
   "lanes",
   "host",
@@ -141,8 +135,8 @@ export const SECTION_TOPIC_ORDER: readonly BuiltinTopic[] = [
  */
 export function orderTopics(topics: readonly string[]): string[] {
   return [...topics].sort((left, right) => {
-    const leftKnown = isBuiltinTopic(left);
-    const rightKnown = isBuiltinTopic(right);
+    const leftKnown = isKnownTopic(left);
+    const rightKnown = isKnownTopic(right);
     if (leftKnown && rightKnown) {
       return SECTION_TOPIC_ORDER.indexOf(left) - SECTION_TOPIC_ORDER.indexOf(right);
     }
