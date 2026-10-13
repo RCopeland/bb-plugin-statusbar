@@ -2,42 +2,42 @@
 //
 // RESPONSIBILITIES
 //
-// This plugin owns exactly three things:
+// This plugin owns exactly two things:
 //
 //   1. The bar's chrome, layout, compaction, and reserved space (in app.tsx).
 //   2. A registry of section providers, discovered over plugin-to-plugin RPC.
-//   3. A reader for `host`, the one topic no plugin owns (this machine).
 //
-// It does NOT own the meaning of any section. Screen real estate, ordering, and
-// tone vocabulary are owned here; the data is not.
+// It owns NO SECTION DATA. Every reading in the bar is produced by a provider
+// plugin; this file decides where each one sits and how it degrades. Screen real
+// estate, ordering, and tone vocabulary are owned here; the numbers are not.
 //
-// WHAT CHANGED FROM 0.1 AND WHY
+// HOW IT GOT HERE
 //
 // 0.1 computed every section itself, because BB then had no cross-plugin data
-// channel. It does now, so sections can be contributed by the plugins that
-// already have the data and the credentials. That is the whole point of the
-// split: bb-plugin-lanes can publish its own headroom instead of this plugin
-// carrying a copy of its logic that silently drifts.
-//
-// WHAT IS BUILT IN NOW
-//
-// `host` only. `usage`, `lanes`, and `spotify` are each supplied by their own
-// provider plugin, and each was removed from this one once that provider
-// existed:
+// channel. It does now, so each section moved to the plugin that already owned
+// its data and credentials:
 //
 //   usage    -> the usage provider plugin
 //   lanes    -> the lanes provider plugin
 //   spotify  -> bb-statusbar-spotify
-//   host     -> read here; no plugin owns this machine's CPU and memory
+//   host     -> the host provider plugin
 //
-// A topic with no provider and no built-in reader simply does not render. The
-// bar degrades to a shorter row rather than inventing a placeholder for data
-// nobody supplied.
+// Every one of those removals had the same motivation: a copy of another
+// plugin's logic inside the bar drifts from its original, and the bar's job is
+// to render sections, not to own them.
 //
-// SPOTIFY specifically: removing the built-in means the slot has no fallback, so
-// uninstalling that provider leaves it empty. That was deliberate — the old
-// built-in read bb-spotify's credentials read-only, which made the Spotify slot
-// depend on a second plugin being installed and authorized.
+// NO FALLBACKS
+//
+// There is deliberately no built-in reader for any topic. A topic with no
+// provider simply does not render: the bar shortens rather than inventing a
+// placeholder for data nobody supplied. The practical consequence is that the
+// bar is exactly as complete as the providers installed, and uninstalling a
+// provider removes its section. That is intended, not a fault.
+//
+// Whether a topic is *known* is separate from whether it is *supplied*: a topic
+// listed in the protocol's BUILTIN_TOPICS keeps its declared position in the
+// row even while unprovided, and `snapshot` reports it in `sources` with a null
+// pluginId so an unsupplied topic is distinguishable from an unknown one.
 
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -57,8 +57,6 @@ import {
   type SectionPayload,
   type SectionTopic,
 } from "@robcopeland/bb-statusbar-section-protocol";
-import { createBuiltins } from "./builtins.js";
-import type { BuiltinTopic } from "@robcopeland/bb-statusbar-section-protocol";
 import { createProviderRegistry } from "./providers.js";
 
 export const PLUGIN_VERSION = "0.2.0";
@@ -80,15 +78,24 @@ const snapshotSchema = z
     generatedAt: z.string(),
     sections: z.array(sectionPayloadSchema),
     /**
-     * Per-topic provenance. A topic missing here fell back to the built-in,
-     * or produced nothing at all.
+     * Per-topic provenance, one entry per topic the bar considered.
+     *
+     * `pluginId: null` means nothing supplied that topic on this read. It is
+     * kept distinct from a missing entry so a topic that is known but currently
+     * unsupplied is visible rather than looking like the bar never knew it.
      */
     sources: z.array(
       z
         .object({
           topic: sectionTopicSchema,
-          kind: z.enum(["provider", "builtin"]),
-          /** Provider plugin id, when `kind` is "provider". */
+          /**
+           * Always "provider" now that every section belongs to a plugin. The
+           * field is kept because it names the axis of provenance; a future
+           * non-plugin source (a built-in that returns, a local file) would be
+           * a new variant rather than a new field.
+           */
+          kind: z.literal("provider"),
+          /** The plugin supplying it, or null when nothing does. */
           pluginId: z.string().nullable(),
         })
         .strict(),
@@ -105,8 +112,7 @@ export const rpcContract = defineRpcContract({
    * Routes a section's transport control back to the plugin that owns it.
    *
    * The bar knows only that a button was pressed; the provider knows what
-   * `next` means. When the section is served by a built-in reader, the bar
-   * handles the action itself.
+   * `next` means. Every action belongs to a provider, so the bar only routes.
    */
   section_action: {
     input: sectionActionRequestSchema,
@@ -133,89 +139,54 @@ export const rpcContract = defineRpcContract({
 // ---------------------------------------------------------------------------
 
 export default async function plugin(bb: BbPluginApi) {
-  const builtins = createBuiltins(bb);
   const registry = createProviderRegistry(bb);
 
   /**
-   * Reads one topic, preferring a discovered provider over the built-in.
+   * Reads one topic from its provider plugin.
    *
-   * A provider that fails is not retried on this call: the built-in answers
-   * instead and the failure is logged. That keeps a broken provider from
-   * blanking a section it never previously supplied.
+   * There is NO fallback. Every section belongs to a plugin, so a topic whose
+   * provider is absent, disabled, or failing simply produces no section: the
+   * bar shortens rather than inventing a reading for data nobody supplied.
    *
-   * A topic with no built-in reader (one a provider invented) has nothing to
-   * fall back to, so a failing provider there produces no section at all
-   * rather than an error placeholder: the bar simply loses a section nobody
-   * promised it would have.
+   * A failure is still reported in `sources` with the provider's id, so
+   * `snapshot` never reads as though no provider was ever found for the topic.
    */
   async function readTopic(
     topic: SectionTopic,
   ): Promise<{ payload: SectionPayload | null; source: SectionSource }> {
     const discovered = registry.get(topic);
-    const builtin = builtinReader(topic);
 
-    if (discovered !== null) {
-      try {
-        const response = await registry.resolve(discovered).snapshot();
-        // A provider that answers with a different topic than the one it was
-        // discovered under would render its data into the wrong slot. Refuse it
-        // rather than trusting the payload.
-        if (response.section.topic !== topic) {
-          bb.log.warn(
-            `provider ${discovered.pluginId} was discovered for "${topic}" but returned "${response.section.topic}"; ignoring it`,
-          );
-        } else {
-          return {
-            payload: response.section,
-            source: { topic, kind: "provider", pluginId: discovered.pluginId },
-          };
-        }
-      } catch (error) {
+    // The bar knows this topic - it is in BUILTIN_TOPICS, so it has a declared
+    // position in the row - but nothing is supplying it right now.
+    if (discovered === null) {
+      return { payload: null, source: { topic, kind: "provider", pluginId: null } };
+    }
+
+    try {
+      const response = await registry.resolve(discovered).snapshot();
+      // A provider that answers with a different topic than the one it was
+      // discovered under would render its data into the wrong slot. Refuse it
+      // rather than trusting the payload.
+      if (response.section.topic !== topic) {
         bb.log.warn(
-          `provider ${discovered.pluginId} failed the "${topic}" section${
-            builtin === null ? "" : ", falling back to the built-in"
-          }: ${error instanceof Error ? error.message : String(error)}`,
+          `provider ${discovered.pluginId} was discovered for "${topic}" but returned "${response.section.topic}"; ignoring it`,
         );
+        return { payload: null, source: { topic, kind: "provider", pluginId: discovered.pluginId } };
       }
-    }
-
-    if (builtin === null) {
-      // No built-in to fall back to. Report the provider that was present (and
-      // failed) rather than a bare null, so `snapshot` does not read as though
-      // no provider was ever found for this topic.
       return {
-        payload: null,
-        source: { topic, kind: "provider", pluginId: discovered?.pluginId ?? null },
+        payload: response.section,
+        source: { topic, kind: "provider", pluginId: discovered.pluginId },
       };
+    } catch (error) {
+      bb.log.warn(
+        `provider ${discovered.pluginId} failed the "${topic}" section: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      // Not a silent drop: the provider id is recorded so a failed section is
+      // distinguishable from a topic nobody supplies.
+      return { payload: null, source: { topic, kind: "provider", pluginId: discovered.pluginId } };
     }
-    return {
-      payload: await builtin(),
-      source: { topic, kind: "builtin", pluginId: null },
-    };
-  }
-
-  /**
-   * The built-in reader for a topic, or null when the bar ships none.
-   *
-   * Topics are open, so a provider-invented topic legitimately finds nothing
-   * here. Readers are a separate map from the bar's other handles precisely so
-   * a name collision cannot hand back something that is not a reader.
-   */
-  function builtinReader(topic: SectionTopic): (() => Promise<SectionPayload>) | null {
-    return builtins.readers[topic] ?? null;
-  }
-
-  /**
-   * Runs a built-in transport action.
-   *
-   * There are none any more. This existed for the Spotify section, which had
-   * built-in controls because the bar computed that reading itself; the topic
-   * is now supplied entirely by bb-plugin-statusbar-spotify, which owns its own
-   * action handler. Kept as an explicit refusal rather than deleted, so a topic
-   * reaching here is a visible error instead of a silently ignored click.
-   */
-  async function runBuiltinAction(topic: SectionTopic, actionId: string): Promise<{ message: string }> {
-    throw new Error(`No built-in action "${actionId}" for the "${topic}" section.`);
   }
 
   bb.rpc.register(

@@ -1,16 +1,15 @@
 // Provider discovery for the statusbar.
 //
-// The bar renders one section per topic. A topic reads from, in order of
-// preference:
+// The bar renders one section per topic, and every section comes from a provider
+// plugin. There is no built-in reader to fall back to.
 //
-//   1. a loaded provider plugin that advertises that topic, or
-//   2. the bar's own built-in reader (see ./builtins.ts).
-//
-// There is no manifest dependency between the bar and a provider. The bar
+// There is no manifest dependency between the bar and a provider either. The bar
 // discovers providers by asking the host which plugins publish the section
-// protocol's methods, then calls the matching one. A provider that is absent,
-// disabled, slow, or throwing simply loses to the built-in: the bar never goes
-// blank because a neighbour is missing.
+// protocol's methods, then calls the matching one.
+//
+// A provider that is absent, disabled, slow, or throwing means that section does
+// not render on that read. The bar shortens rather than inventing a reading, and
+// one bad provider never affects another topic.
 //
 // VERIFIED CONSTRAINT (bb 0.44.0 / SDK 0.5.29)
 //
@@ -88,7 +87,7 @@ export function createProviderRegistry(bb: BbPluginApi) {
    * Candidate plugin ids that publish `section.v1.snapshot`.
    *
    * A failure here is not fatal: an unreadable discovery list means "no
-   * providers", and every topic falls back to its built-in reader.
+   * providers", and the bar renders no sections until the next scan.
    */
   async function scan(): Promise<DiscoveredProvider[]> {
     const published = await bb.sdk.plugins.experimental_discoverRpc();
@@ -150,8 +149,8 @@ export function createProviderRegistry(bb: BbPluginApi) {
      *
      * Never throws, and NEVER blocks a read. The scan is kicked off in the
      * background and its result is used from the next call onwards: awaiting it
-     * here would let one slow or hanging provider delay the entire bar, which
-     * is exactly the failure mode the built-in fallbacks exist to avoid.
+     * here would let one slow or hanging provider delay the entire bar, and a
+     * single badly-behaved plugin must not be able to stall every section.
      */
     refresh(now: number = Date.now()): void {
       if (scanning) return;

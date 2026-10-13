@@ -18,7 +18,7 @@
 // So the dependency is expressed as DISCOVERY rather than as a manifest
 // requirement. The bar advertises what it needs; providers advertise what they
 // have; the bar polls, matches by topic, and prefers a provider over its own
-// built-in fallback. Nothing installs out of order and nothing breaks when
+// fallback inside the bar. Nothing installs out of order and nothing breaks when
 // either side is absent.
 //
 // IMPORTANT — this package is deliberately dependency-free apart from zod. It
@@ -66,15 +66,15 @@ export const DISCOVERY_INTERVAL_MS = 10_000;
  * Which slot a section occupies in the bar.
  *
  * This is the *identity* of a section, not a display name: the bar renders at
- * most one provider per topic, and a provider for topic `lanes` replaces the
- * bar's built-in lanes reading.
+ * most one provider per topic, and a topic is a slot that exactly one plugin
+ * may occupy.
  *
  * Topics are OPEN, not a closed set. A plugin may contribute a topic the bar
  * has never heard of (see the in-repo `section-clock` example), which is what
  * makes "sections are separate plugins" mean something: adding a section does
  * not require a change to the bar. The four topics below are the ones the bar
- * ships built-in readers for; they are constants rather than an enum so a
- * provider can name its own.
+ * knows by name; they are constants rather than an enum so a provider can name
+ * its own.
  *
  * Ordering is still owned by the bar, so a provider cannot push itself to the
  * front of the row.
@@ -90,7 +90,23 @@ export const sectionTopicSchema = z
   .regex(/^[a-z0-9-]+$/, "a topic must be lowercase letters, digits, or dashes");
 export type SectionTopic = z.infer<typeof sectionTopicSchema>;
 
-/** Topics the bar ships a built-in reader for. */
+/**
+ * Topics the bar knows by name and gives a fixed position in the row.
+ *
+ * The name is historical. It used to mean "the bar ships a reader for these",
+ * but the bar now computes no readings at all - every one is supplied by a
+ * provider plugin.
+ *
+ * What the constant still means is LAYOUT IDENTITY, not data ownership: a topic
+ * listed here is known to the bar and sorts in the declared order of
+ * `SECTION_TOPIC_ORDER`, even while nothing supplies it. A topic a provider
+ * invents is equally renderable but sorts after these, alphabetically.
+ *
+ * Renaming it to something like `KNOWN_TOPICS` would be more honest, but it is
+ * part of the published contract and every existing provider imports it, so the
+ * rename would be a breaking change for a cosmetic gain. The doc comment is the
+ * cheap fix.
+ */
 export const BUILTIN_TOPICS = ["usage", "lanes", "host", "spotify"] as const;
 export type BuiltinTopic = (typeof BUILTIN_TOPICS)[number];
 
