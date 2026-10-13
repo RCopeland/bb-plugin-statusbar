@@ -7,14 +7,15 @@ $0.39 today $2.21 MTD │ OpenRouter 74% │ CPU 34% MEM 51% DISK 9% load 0.84 �
 ```
 
 The bar owns its chrome, layout, ordering, and tone vocabulary. It does **not**
-own the meaning of any section: a section's numbers are produced either by a
-provider plugin or by a built-in fallback reader.
+own the meaning of any section: a section's numbers are produced by a provider
+plugin. The only reading the bar computes itself is `host` — this machine's CPU
+and memory, which no plugin owns.
 
 ## Layout
 
 ```
 packages/
-  statusbar/          the bar: overlay, layout, registry, built-in fallbacks
+  statusbar/          the bar: overlay, layout, registry, host reader
   section-clock/      example provider: contributes a `clock` topic
   section-protocol/   the wire contract, PUBLISHED as
                       @robcopeland/bb-statusbar-section-protocol
@@ -68,22 +69,26 @@ statusbar, and it does not try to. Contribution is pull-based:
 Consequences, all of them intentional:
 
 - Nothing installs in any particular order.
-- The bar works with zero providers installed.
-- Disabling a provider silently returns that topic to the built-in — no gap.
-- A provider that throws is logged and skipped for that topic; the section still
-  renders from the built-in rather than going blank. Verified by simulating a
-  provider crash.
+- With no providers installed the bar renders only `host`; with providers it
+  fills out. It never invents a section for data nobody supplied.
+- Disabling a provider for a topic with a built-in returns that topic to the
+  built-in; for `usage`, `lanes`, and `spotify` there is no fallback, so the
+  section disappears. Dropping a section you uninstalled is correct behavior, not
+  a fault.
+- A provider that throws is logged and skipped for that topic; the section falls
+  back (or disappears) rather than going blank mid-render. Verified by simulating
+  a provider crash.
 - Two plugins claiming one topic is logged, and one wins. The bar never fails
   because of a collision.
-- A topic the bar has no built-in reader for simply appears when a provider for
-  it is loaded, and disappears when that provider goes away.
+- A topic the bar has never heard of appears when a provider for it is loaded,
+  and disappears when that provider goes away.
 
 `bb plugin rpc call statusbar snapshot` reports `sources`, so you can always tell
 where a reading came from:
 
 ```json
-"usage":   { "kind": "builtin",  "pluginId": null },
-"clock":   { "kind": "provider", "pluginId": "statusbar-section-clock" }
+"host":   { "kind": "builtin",  "pluginId": null },
+"lanes":  { "kind": "provider", "pluginId": "statusbar-lanes" }
 ```
 
 ## Writing a provider
@@ -184,28 +189,44 @@ Two things follow:
 
 ## Sections
 
-Each topic reads from a provider when one is present, otherwise from the built-in:
+Every section except `host` is supplied by a provider plugin. The bar computes
+nothing else.
 
-| Section | Built-in source | Caches for |
+| Section | Supplied by | Built-in fallback |
 | --- | --- | --- |
-| Usage | `~/.bb/plugins/usage/data.db` (read-only, `node:sqlite`) | 60s |
-| Lanes | `bb.sdk.system.usageLimits()` + OpenRouter `/api/v1/credits` | 60s |
-| Host | In-plugin sampling (`node:os`, `df -Pk`) | 5s |
-| Spotify | **Not built in** — supplied by `bb-statusbar-spotify` | — |
+| Usage | usage provider plugin | none |
+| Lanes | lanes provider plugin | none |
+| Host | **the bar** (`node:os`, `df -Pk`, 5s cache) | n/a |
+| Spotify | `bb-statusbar-spotify` | none |
 
-The bar polls `snapshot()` every 3 seconds. Each section is cached server-side
-with its own TTL, so a tick is mostly memory reads.
+`statusbar snapshot` reports where each section came from:
 
-### Built-in fallbacks are duplicated on purpose
+```
+usage   -> provider statusbar-usage
+lanes   -> provider statusbar-lanes
+host    -> builtin
+spotify -> provider statusbar-spotify
+```
 
-The usage and lanes readers are still copies of the logic in
-`bb-plugin-usage-footer` and `bb-plugin-lanes`. They exist so the bar is useful
-alone and so disabling a provider degrades gracefully. If those plugins publish
-their own sections, the copies stop being the live path — but they are not
-deleted, because a fallback that has been removed is not a fallback.
+The bar polls `snapshot()` every 3 seconds. Sections are cached by the plugin
+that produces them, so a tick is mostly memory reads.
 
-**Known cost:** until then, a schema or provider change in those plugins does not
-propagate here.
+### Why there is almost nothing built in
+
+`host` is the only built-in reader, because it is the only topic no plugin owns:
+it is this machine's CPU, memory, disk, and load, sampled directly rather than
+read from someone else's store. There is no second copy to drift from, so there
+is nothing to extract.
+
+`usage`, `lanes`, and `spotify` used to be computed here. Each was removed once
+the plugin that owns that data published a provider, for the same reason in every
+case: a copy of another plugin's logic inside the bar drifts from its original,
+and the bar's job is to render sections, not to own them.
+
+**A topic with no provider and no built-in simply does not render.** The bar
+shortens rather than inventing a placeholder for data nobody supplied. So
+uninstalling a provider removes its section — that is the intended behavior, not
+a fault.
 
 ## Spotify
 
@@ -352,11 +373,11 @@ contract changes, and note it in the bar's release notes.
 
 ## Known limitations
 
-- Depends on BB's secret file layout and on the plugin server having read access
-  to it, for the usage reader's database.
-- The `spotify` topic has no built-in fallback, so uninstalling
-  `bb-statusbar-spotify` leaves that slot empty rather than degrading.
-- Built-in usage and lanes logic is duplicated and can drift from its originals.
+- `usage`, `lanes`, and `spotify` have no built-in fallback. Uninstalling the
+  provider for one of those leaves its slot empty; the bar does not degrade to a
+  reading computed here, because it no longer computes any of them.
+- The bar is therefore only as complete as the providers installed. Its own
+  contribution is `host` plus the layout.
 - Providers cannot be authenticated on this BB version (see above).
 - The bar is a fixed overlay. `experimental_appOverlay` supplies no chrome,
   positioning, or responsive behavior, so re-verify against the composer, the

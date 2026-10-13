@@ -1,41 +1,51 @@
-// The bar's own fallback readers, one per topic.
+// The bar's own fallback readers.
 //
-// These exist so the bar is useful with nothing else installed. When a provider
-// plugin for a topic is loaded, that provider wins and the corresponding reader
-// here is simply not called — but it is never removed, because disabling a
-// provider must fall back to a working bar rather than an empty one.
+// HISTORY, AND WHY THIS FILE IS ALMOST EMPTY
 //
-// HISTORY: usage and lanes were duplicated from bb-plugin-usage-footer and
-// bb-plugin-lanes because BB had no cross-plugin data channel. It does now
-// (plugin-to-plugin RPC), so the intent is for those plugins to publish the
-// section themselves and for these readers to become the offline fallback
-// rather than the primary source. Until they do, this is still the live path,
-// and the duplication caveat in the README still applies to it.
+// This file used to compute every section itself — usage cost, model lane
+// headroom, host resources, and Spotify — because BB had no cross-plugin data
+// channel. It does now (plugin-to-plugin RPC), so each topic is supplied by the
+// plugin that already owns its data and credentials:
 //
-// NOTE: there is deliberately no Spotify reader here. See `createBuiltins`.
-// The `spotify` topic is served only by bb-plugin-statusbar-spotify.
+//   usage    -> the usage provider plugin
+//   lanes    -> the lanes provider plugin
+//   spotify  -> bb-statusbar-spotify
+//   host     -> still read here (see below)
+//
+// Each removal was deliberate. The reasoning is the same in every case: a copy
+// of another plugin's logic inside the bar drifts from its original, and the
+// bar's job is to render sections, not to own them.
+//
+// WHY A READER REMAINS FOR HOST
+//
+// `host` is the one topic with no owning plugin, because it is not another
+// plugin's data: it is this machine's CPU, memory, disk, and load, sampled
+// directly from node:os. There is no second copy anywhere to drift from, so
+// there is nothing to extract. If a host-monitor-style provider is installed it
+// still wins — this is only the fallback.
+//
+// A topic with no built-in reader and no provider simply produces no section.
+// That is intended: the bar degrades to a shorter row rather than inventing a
+// placeholder for data nobody supplied.
 
-import { readFile } from "node:fs/promises";
-import { homedir, cpus, loadavg, totalmem, freemem, hostname } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { cpus, loadavg, totalmem, freemem, homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   metricsSection,
-  sectionPayloadSchema,
   unavailableSection,
   type SectionPayload,
 } from "@robcopeland/bb-statusbar-section-protocol";
-
-const USAGE_DB_PATH = join(homedir(), ".bb", "plugins", "usage", "data.db");
-const ENV_JSON_PATH = join(homedir(), ".bb", "env.json");
-const FETCH_TIMEOUT_MS = 20_000;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/** A cached async value with a fixed lifetime, plus explicit invalidation. */
+/**
+ * A cached async value with a fixed lifetime.
+ *
+ * `invalidate()` drops the current value so the next read reloads. Failures are
+ * never cached, and concurrent reads share one in-flight promise.
+ */
 function makeCache<T>(ttlMs: number, load: () => Promise<T>) {
   let value: T | null = null;
   let expiresAt = 0;
@@ -65,14 +75,17 @@ function makeCache<T>(ttlMs: number, load: () => Promise<T>) {
   return read;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+/** Mirrors the bar's own tone vocabulary: attention at 75%, critical at 90%. */
+function toneForPercent(value: number | null): "neutral" | "attention" | "critical" {
+  if (value === null) return "neutral";
+  if (value >= 90) return "critical";
+  if (value >= 75) return "attention";
+  return "neutral";
+}
+
+function percent(value: number | null): string {
+  if (value === null) return "—";
+  return value > 0 && value < 10 ? `${value.toFixed(1)}%` : `${Math.round(value)}%`;
 }
 
 /**
@@ -107,257 +120,9 @@ async function diskUsagePercent(path: string): Promise<number | null> {
   }
 }
 
-/** Mirrors the bar's own tone vocabulary: attention at 75%, critical at 90%. */
-function toneForPercent(value: number | null): "neutral" | "attention" | "critical" {
-  if (value === null) return "neutral";
-  if (value >= 90) return "critical";
-  if (value >= 75) return "attention";
-  return "neutral";
-}
-
-function money(value: number | null): string {
-  if (value === null) return "—";
-  if (value === 0) return "$0.00";
-  if (value < 0.01) return "<$0.01";
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${Math.round(value).toLocaleString()}`;
-}
-
-function percent(value: number | null): string {
-  if (value === null) return "—";
-  return value > 0 && value < 10 ? `${value.toFixed(1)}%` : `${Math.round(value)}%`;
-}
-
-function localDay(now: Date): string {
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
 // ---------------------------------------------------------------------------
-// Usage — duplicated from bb-plugin-usage-footer
-// ---------------------------------------------------------------------------
-
-function createUsageReader() {
-  let handle: DatabaseSync | null = null;
-
-  function connection(): DatabaseSync {
-    if (handle === null) {
-      // Read-only: the Usage plugin owns this file. WAL means a reader never
-      // blocks its writer. node:sqlite is built in, so no native module.
-      handle = new DatabaseSync(USAGE_DB_PATH, { readOnly: true });
-      handle.exec("PRAGMA busy_timeout = 2000");
-    }
-    return handle;
-  }
-
-  return function readUsage(): SectionPayload {
-    try {
-      const conn = connection();
-      const latest = conn
-        .prepare(`SELECT MAX(day) AS day FROM usage_events`)
-        .get() as { day: string | null } | undefined;
-      const latestDay = latest?.day ?? null;
-
-      if (latestDay === null) {
-        return unavailableSection({
-          topic: "usage",
-          status: "idle",
-          detail: "No usage recorded yet.",
-        });
-      }
-
-      const todayRow = conn
-        .prepare(`SELECT SUM(cost_usd) AS cost FROM usage_events WHERE day = ?`)
-        .get(latestDay) as { cost: number | null } | undefined;
-
-      const monthLabel = latestDay.slice(0, 7);
-      const monthRow = conn
-        .prepare(`SELECT SUM(cost_usd) AS cost FROM usage_events WHERE day LIKE ?`)
-        .get(`${monthLabel}%`) as { cost: number | null } | undefined;
-
-      const isToday = latestDay === localDay(new Date());
-      return sectionPayloadSchema.parse({
-        topic: "usage",
-        status: "ok",
-        presentation: "headline",
-        metrics: [
-          {
-            label: "MTD",
-            value: money(Number(monthRow?.cost ?? 0)),
-            tone: "neutral",
-            detail: `Month to date (${monthLabel}).`,
-            // The pre-split bar dropped the month figure on a narrow window
-            // and kept today's number, which is the one people glance at.
-            importance: "secondary" as const,
-          },
-        ],
-        headline: money(Number(todayRow?.cost ?? 0)),
-        // The bar labels today's figure honestly when the newest data is older
-        // than the current calendar day.
-        detail: isToday ? null : `Latest data is ${latestDay}.`,
-      });
-    } catch (error) {
-      return unavailableSection({
-        topic: "usage",
-        detail: `Usage store unreadable: ${(error as Error).message}`,
-      });
-    }
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Lanes — duplicated from bb-plugin-lanes
-// ---------------------------------------------------------------------------
-
-/**
- * Credentials come from bb's env store, FILE FIRST and process.env only as a
- * fallback. The order matters: process.env is a snapshot taken when the server
- * started, so after a key rotation it serves a revoked credential until the
- * whole server restarts. env.json is the live file the user edits.
- */
-async function readEnvKey(name: string): Promise<string> {
-  try {
-    const raw = await readFile(ENV_JSON_PATH, "utf8");
-    const fromFile = (JSON.parse(raw)?.env ?? {})[name];
-    if (typeof fromFile === "string" && fromFile.length > 0) return fromFile;
-  } catch {
-    // fall through to the process environment
-  }
-  return process.env[name] ?? "";
-}
-
-interface LaneReading {
-  label: string;
-  value: string;
-  tone: "neutral" | "attention" | "critical";
-  detail: string | null;
-}
-
-function laneMetric(name: string, usedPercent: number | null, resetLabel: string | null, detail: string | null): LaneReading {
-  const suffix = resetLabel === null ? "" : ` ↻${resetLabel}`;
-  return {
-    label: name,
-    value: `${percent(usedPercent)}${suffix}`,
-    tone: toneForPercent(usedPercent),
-    detail,
-  };
-}
-
-/**
- * A lane that could not be read.
- *
- * The `detail` is carried as the metric label rather than left to a tooltip:
- * the pre-split bar rendered `Claude: provider reported "unconfigured"` as
- * visible text, and a lane that silently shows `—` is worse than one that says
- * why.
- */
-function brokenLane(name: string, detail: string): LaneReading {
-  return { label: name, value: "—", tone: "critical", detail };
-}
-
-/** "↻4h" / "↻2d" / "↻12m" — when a refilling quota comes back. */
-function resetLabel(resetsAt: string | null): string | null {
-  if (resetsAt === null) return null;
-  const target = new Date(resetsAt).getTime();
-  if (!Number.isFinite(target)) return null;
-  const seconds = Math.floor((target - Date.now()) / 1000);
-  if (seconds <= 0) return "now";
-  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86_400)}d`;
-}
-
-async function nativeLanes(bb: BbPluginApi): Promise<LaneReading[]> {
-  const spec: Array<[string, string]> = [
-    ["claudeCode", "Claude"],
-    ["codex", "Codex"],
-  ];
-
-  try {
-    const usage = (await bb.sdk.system.usageLimits()) as Record<string, any>;
-    return spec.flatMap(([key, name]) => {
-      const provider = usage?.[key];
-      // A provider that is not installed is not a lane — omit rather than
-      // render a permanently empty row.
-      if (!provider || provider.status === "not_installed") return [];
-      if (provider.status !== "ok") {
-        return [
-          {
-            label: name,
-            value: "—",
-            tone: "critical" as const,
-            detail: `provider reported "${provider.status}"`,
-          },
-        ];
-      }
-      const windows = (provider.windows ?? []) as Array<{ label?: string; usedPercent?: number; resetsAt?: string | null }>;
-      if (windows.length === 0) return [laneMetric(name, null, null, null)];
-
-      let worst = windows[0]!;
-      for (const candidate of windows) {
-        if (Number(candidate.usedPercent ?? 0) > Number(worst.usedPercent ?? 0)) worst = candidate;
-      }
-      return [
-        laneMetric(
-          name,
-          Number(worst.usedPercent ?? 0),
-          worst.resetsAt ?? null,
-          String(worst.label ?? "window"),
-        ),
-      ];
-    });
-  } catch (error) {
-    return spec.map(([, name]) => ({
-      label: name,
-      value: "—",
-      tone: "critical" as const,
-      detail: `usage lookup failed: ${(error as Error).message}`,
-    }));
-  }
-}
-
-async function openRouterLane(): Promise<LaneReading> {
-  const key = await readEnvKey("OPENROUTER_API_KEY");
-  if (key === "") {
-    return {
-      label: "OpenRouter",
-      value: "not configured",
-      tone: "neutral",
-      detail: "no OPENROUTER_API_KEY in bb's env store",
-    };
-  }
-  try {
-    const response = await fetchWithTimeout("https://openrouter.ai/api/v1/credits", {
-      headers: { authorization: `Bearer ${key}` },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const json = (await response.json()) as any;
-    const total = Number(json?.data?.total_credits ?? 0);
-    const used = Number(json?.data?.total_usage ?? 0);
-    const remaining = total - used;
-    // Metered: this balance does not refill on its own, so no reset arrow.
-    return laneMetric(
-      "OpenRouter",
-      total > 0 ? (used / total) * 100 : 0,
-      null,
-      `$${remaining.toFixed(2)} left`,
-    );
-  } catch (error) {
-    return {
-      label: "OpenRouter",
-      value: "—",
-      tone: "critical",
-      detail: (error as Error).message,
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Host — sampled in-plugin, deliberately minimal (host-monitor owns history
-// and the process list; the bar only needs a current reading)
+// Host — sampled here, deliberately minimal (a host-monitor provider owns
+// history and the process list; the bar only needs a current reading)
 // ---------------------------------------------------------------------------
 
 let lastCpuTimes: { idle: number; total: number } | null = null;
@@ -405,8 +170,7 @@ async function readHost(): Promise<SectionPayload> {
       metrics: [
         { label: "CPU", value: percent(cpuValue), tone: toneForPercent(cpuValue), detail: null },
         { label: "MEM", value: percent(memoryPercent), tone: toneForPercent(memoryPercent), detail: null },
-        // DISK and load are the first to go on a narrow window, matching the
-        // pre-split bar's compact behavior.
+        // DISK and load are the first to go on a narrow window.
         {
           label: "DISK",
           value: percent(diskPercent),
@@ -434,55 +198,26 @@ async function readHost(): Promise<SectionPayload> {
 // ---------------------------------------------------------------------------
 
 const HOST_CACHE_MS = 5_000;
-const USAGE_CACHE_MS = 60_000;
-const LANES_CACHE_MS = 60_000;
 
 /**
  * The bar's built-in readers.
  *
- * There is no built-in reader for `spotify`. That section is supplied entirely
- * by the separate `bb-plugin-statusbar-spotify` provider, which claims the
- * topic and is preferred over any built-in. The topic still appears in the
- * protocol's BUILTIN_TOPICS so it keeps its declared position in the row;
- * "built-in" there means "the bar knows this slot", not "the bar computes it".
+ * `usage`, `lanes`, and `spotify` are absent on purpose; each is supplied by its
+ * own provider plugin. `host` remains because no plugin owns that data — it is
+ * this machine, sampled here.
  *
- * The cost is deliberate: with no fallback, uninstalling that provider leaves
- * the slot empty rather than degrading to a reading computed here. That is the
- * intended tradeoff — the alternative was two independent refresh flows racing
- * on the same Spotify token.
+ * A missing topic means no fallback: if nothing provides it, it does not render.
  */
 export interface Builtins {
   /** Built-in readers, keyed by topic. A provider-supplied topic is absent. */
   readers: Record<string, () => Promise<SectionPayload>>;
 }
 
-export function createBuiltins(bb: BbPluginApi): Builtins {
-  const readUsage = createUsageReader();
-
-  const usageCache = makeCache(USAGE_CACHE_MS, async () => readUsage());
+export function createBuiltins(_bb: BbPluginApi): Builtins {
   const hostCache = makeCache(HOST_CACHE_MS, readHost);
 
-  const lanesCache = makeCache(LANES_CACHE_MS, async (): Promise<SectionPayload> => {
-    const [native, openrouter] = await Promise.all([nativeLanes(bb), openRouterLane()]);
-    const lanes = [...native, openrouter];
-    if (lanes.length === 0) {
-      return unavailableSection({ topic: "lanes", status: "idle", detail: "no lanes" });
-    }
-    return metricsSection({ topic: "lanes", metrics: lanes });
-  });
-
-  /**
-   * Built-in readers, keyed by topic.
-   *
-   * The index signature is deliberate: topics are open, so the bar looks up a
-   * provider-invented topic here and legitimately finds nothing. It also keeps
-   * this object free of the non-reader members below, which are reached by name
-   * rather than by topic.
-   */
   return {
     readers: {
-      usage: usageCache,
-      lanes: lanesCache,
       host: hostCache,
     },
   };

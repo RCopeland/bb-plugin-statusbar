@@ -61,20 +61,20 @@ BB now has a cross-plugin RPC channel, which it did not when this bar was first
 written. That means the plugin that already owns a piece of data can publish it,
 instead of the bar carrying a copy that goes stale.
 
-- `statusbar` — the bar, its registry, and the built-in fallbacks.
+- `statusbar` — the bar, its registry, and the `host` reading (the one topic no
+  plugin owns).
 - `section-clock` — example provider, adding a clock. It reads nothing but the
   system time on purpose: with no data source to explain, what remains is purely
   the shape of a contribution.
 - `section-protocol` — the shared contract (not installed on its own).
 
-The built-in usage and lanes readers are still copies of the logic in the Usage
-Footer and Lanes plugins. They exist so the bar stands alone; they are the
-fallback, not the ambition.
+`usage`, `lanes`, and `spotify` are each supplied by a dedicated provider plugin,
+and the bar no longer computes any of them. Each was removed from the bar once
+its provider existed, so there is no second copy of that logic to drift.
 
-There is no built-in Spotify reader. That section is a separate plugin
-(`bb-statusbar-spotify`) which owns its own credentials, so the refresh token has
-exactly one owner and no two refresh flows race. Credentials never leave the
-server.
+Spotify is a separate plugin (`bb-statusbar-spotify`) which owns its own
+credentials, so the refresh token has exactly one owner and no two refresh flows
+race. Credentials never leave the server.
 
-Nothing is sent anywhere except the OpenRouter API and whatever a section
-provider plugin talks to on its own behalf.
+The bar itself talks to no network service. Anything a section fetches, it
+fetches on its own behalf.

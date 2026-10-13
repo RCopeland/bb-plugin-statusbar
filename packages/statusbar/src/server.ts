@@ -6,11 +6,10 @@
 //
 //   1. The bar's chrome, layout, compaction, and reserved space (in app.tsx).
 //   2. A registry of section providers, discovered over plugin-to-plugin RPC.
-//   3. A built-in reader per topic, so the bar works with nothing installed.
+//   3. A reader for `host`, the one topic no plugin owns (this machine).
 //
-// It does NOT own the meaning of any section. A section's numbers are produced
-// either by a provider plugin (preferred) or by a fallback reader here. Screen
-// real estate, ordering, and tone vocabulary are owned here; the data is not.
+// It does NOT own the meaning of any section. Screen real estate, ordering, and
+// tone vocabulary are owned here; the data is not.
 //
 // WHAT CHANGED FROM 0.1 AND WHY
 //
@@ -20,18 +19,25 @@
 // split: bb-plugin-lanes can publish its own headroom instead of this plugin
 // carrying a copy of its logic that silently drifts.
 //
-// The fallbacks remain for the topics this plugin still computes, so installing
-// it alone still produces a full bar, and disabling a provider degrades to the
-// built-in rather than to a gap.
+// WHAT IS BUILT IN NOW
 //
-// SPOTIFY
+// `host` only. `usage`, `lanes`, and `spotify` are each supplied by their own
+// provider plugin, and each was removed from this one once that provider
+// existed:
 //
-// There is no built-in Spotify reader or control path. That section is supplied
-// entirely by bb-plugin-statusbar-spotify, a separate plugin that owns its own
-// Spotify credentials. The bar's built-in previously read bb-spotify's
-// credentials read-only, which made the Spotify slot depend on a second plugin
-// being installed and authorized; removing it means the slot has no fallback,
-// so uninstalling the provider leaves it empty rather than blanking the bar.
+//   usage    -> the usage provider plugin
+//   lanes    -> the lanes provider plugin
+//   spotify  -> bb-statusbar-spotify
+//   host     -> read here; no plugin owns this machine's CPU and memory
+//
+// A topic with no provider and no built-in reader simply does not render. The
+// bar degrades to a shorter row rather than inventing a placeholder for data
+// nobody supplied.
+//
+// SPOTIFY specifically: removing the built-in means the slot has no fallback, so
+// uninstalling that provider leaves it empty. That was deliberate — the old
+// built-in read bb-spotify's credentials read-only, which made the Spotify slot
+// depend on a second plugin being installed and authorized.
 
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
