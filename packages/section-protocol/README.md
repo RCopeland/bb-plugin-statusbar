@@ -40,6 +40,35 @@ build script; nothing else here depends on shipping source.
 | `orderTopics` | The bar's display ordering rule |
 | `KNOWN_TOPICS` / `SECTION_TOPIC_ORDER` | Topics the bar gives a fixed position in the row |
 
+## Changelog
+
+### 0.3.0
+
+**Breaking:** `BUILTIN_TOPICS` is renamed to `KNOWN_TOPICS`, and `BuiltinTopic`
+to `KnownTopic`.
+
+The old name claimed the bar ships a reader for those topics. It does not —
+the bar computes no readings at all, and every section is supplied by a provider
+plugin. What the constant actually describes is layout identity: which slots the
+bar knows by name and where they sit in the row.
+
+To migrate, rename the import. Nothing else changed — the values are identical,
+so there is no behavioral difference:
+
+```diff
+-import { BUILTIN_TOPICS } from "@robcopeland/bb-statusbar-section-protocol";
++import { KNOWN_TOPICS } from "@robcopeland/bb-statusbar-section-protocol";
+```
+
+If you never imported it, this release needs no changes from you. None of the
+reference providers did.
+
+### 0.2.0
+
+Open topics: `SectionTopic` became an open string rather than a fixed enum, so a
+provider can contribute a topic the bar has never heard of. Added section-level
+`importance`, `textSection`, and `orderTopics`.
+
 ## Quick start
 
 ```ts
